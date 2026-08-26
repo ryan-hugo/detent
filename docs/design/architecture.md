@@ -35,6 +35,7 @@ findings            security changes
 - `src/core/findings.ts`: deterministic rules over the model (the tool's opinion).
 - `src/core/classify.ts`: what a call name means. Framework-agnostic, so adapters share one vocabulary.
 - `src/core/contract.ts`: explicit invariants declared by the team, checked against the model. Data only, never executed.
+- `src/core/explain.ts`: reports why an entry point was classified as it was, from evidence already in the model. Reports reasoning, never performs any.
 - `src/core/enrich.ts`: adds reachability context to another scanner's SARIF output. Matches by path only — no file named in a SARIF is ever opened.
 - `src/core/diff.ts`: semantic comparison between models.
 - `src/reporters/`: presentation only; no security logic. `text.ts` for terminals/CI logs, `markdown.ts` for pull-request surfaces, `html.ts` for a self-contained offline report. Reporters must escape all model-derived strings, since identifiers originate in untrusted target code.

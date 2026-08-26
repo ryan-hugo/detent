@@ -8,8 +8,9 @@ import { CONTRACT_FILENAME, ContractError, checkContract, parseContract } from "
 import { CONFIG_FILENAME, ConfigError } from "./core/config.js";
 import { suggestVocabulary } from "./core/vocabulary.js";
 import { EnrichError, enrichFindings, parseSarif } from "./core/enrich.js";
+import { ExplainError, explain, knownSubjects } from "./core/explain.js";
 import type { ApplicationSecurityModel } from "./core/model.js";
-import { renderBreaches, renderDiff, renderModel, renderTriage } from "./reporters/text.js";
+import { renderBreaches, renderDiff, renderExplanations, renderModel, renderTriage } from "./reporters/text.js";
 import { renderContractHtml, renderDiffHtml, renderGraphHtml, renderModelHtml } from "./reporters/html.js";
 import { renderContractMarkdown, renderDiffMarkdown } from "./reporters/markdown.js";
 
@@ -24,6 +25,7 @@ function usage(): never {
       "  snapshot  [project] [--out PATH]",
       "  diff      [project] [--base REF | --baseline PATH] [--json] [--html PATH] [--markdown]",
       "  contract  [project] [--contract PATH] [--json] [--html PATH] [--markdown]",
+      "  explain   [project] --route ROUTE [--json]",
       "  triage    [project] --sarif PATH [--json]",
       "  graph     [project] [--html PATH]",
       "  version",
@@ -180,6 +182,36 @@ try {
     }
     // Anything a stranger can reach fails the build; the rest is reported.
     if (enriched.some((finding) => finding.priority === "critical")) process.exitCode = 1;
+  } else if (command === "explain") {
+    // A route starts with `/`, which the positional project argument would
+    // swallow, so the subject is a named flag like every other one here.
+    const subject = option(args, "--route");
+    if (!subject) {
+      console.error(
+        `explain needs a route: detent explain [project] --route /api/posts\n` +
+          `An export name or entry-point id works too.`,
+      );
+      process.exit(2);
+    }
+
+    const model = scan(root);
+    let explanations;
+    try {
+      explanations = explain(model, subject);
+    } catch (cause) {
+      if (!(cause instanceof ExplainError)) throw cause;
+      const known = knownSubjects(model);
+      console.error(
+        known.length > 0
+          ? `${cause.message}\n\nKnown entry points:\n${known.map((item) => `  ${item}`).join("\n")}`
+          : `${cause.message}\n\nNo entry points were discovered in ${root}.`,
+      );
+      process.exit(2);
+    }
+
+    console.log(
+      args.includes("--json") ? JSON.stringify(explanations, null, 2) : renderExplanations(explanations),
+    );
   } else if (command === "graph") {
     const model = scan(root);
     const out = option(args, "--html") ?? path.join(root, ".detent", "graph.html");

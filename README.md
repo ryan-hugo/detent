@@ -35,6 +35,7 @@ detent inspect  [project] [--json] [--html PATH]
 detent snapshot [project] [--out PATH]
 detent diff     [project] [--base REF | --baseline PATH] [--json] [--html PATH] [--markdown]
 detent contract [project] [--contract PATH] [--json] [--html PATH] [--markdown]
+detent explain  [project] --route ROUTE [--json]
 detent triage   [project] --sarif PATH [--json]
 detent init     [project] [--force]
 detent graph    [project] [--html PATH]
@@ -98,6 +99,32 @@ BREACH entry-point-requires-access
 ```
 
 Every breach states what you demanded and what the model actually shows. `match` accepts `*`. A breach exits 1.
+
+## Asking why
+
+A verdict you cannot check is a verdict you have to trust. `explain` shows the evidence behind one:
+
+```bash
+detent explain --route /api/posts/[postId]
+```
+
+```
+DELETE /api/posts/[postId]
+  app/api/posts/[postId]/route.ts:14
+
+  Access: authenticated
+  Evidence:
+    verifyCurrentUserHasAccessToPost()
+      -> getServerSession()
+      establishes: authenticated (app/api/posts/[postId]/route.ts:84)
+  Reaches: database-write
+```
+
+The chain is the point: this route is not guarded by anything you can see in the handler. The guard is one call away, and that is exactly the case a reviewer misses.
+
+An entry point with no guard says so rather than showing an empty section. A route with several HTTP methods explains each one — answering for only `GET` would hide the `DELETE` you did not think to ask about. Nothing here is inferred: `explain` reports the reasoning the scanner already did, so the same tree always produces the same answer.
+
+`--json` gives the same content for scripts and agents.
 
 ## Seeing what reaches what
 

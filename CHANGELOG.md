@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`explain`.** Shows the evidence behind an access level: the call that
+  established it and the chain of functions walked to reach it. The resolver
+  already computed that chain and the scanner discarded it; `AuthSignal.via`
+  now records it, so a route protected by a guard two calls away can be shown
+  to be protected rather than asserted. Reports the reasoning the scanner
+  already did — no new heuristics, no LLM, deterministic for a given tree.
+
 - **SvelteKit adapter.** `+server.ts` method exports, `export const actions = {…}`
   form actions (one entry point per key), and server `load`. The client boundary
   follows SvelteKit's filename convention rather than a directive, and

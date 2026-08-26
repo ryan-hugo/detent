@@ -2,6 +2,7 @@ import type { ApplicationSecurityModel } from "../core/model.js";
 import type { SecurityChange } from "../core/diff.js";
 import type { Breach } from "../core/contract.js";
 import type { EnrichedFinding } from "../core/enrich.js";
+import type { Explanation } from "../core/explain.js";
 
 export function renderModel(model: ApplicationSecurityModel): string {
   const lines: string[] = [];
@@ -76,5 +77,42 @@ export function renderTriage(findings: EnrichedFinding[]): string {
     if (finding.message) lines.push(`  ${finding.message}`);
     lines.push("");
   }
+  return lines.join("\n");
+}
+
+export function renderExplanations(explanations: Explanation[]): string {
+  const lines: string[] = [];
+
+  for (const item of explanations) {
+    if (lines.length > 0) lines.push("");
+    lines.push(`${item.method ?? item.kind} ${item.subject}`);
+    lines.push(`  ${item.location.file}:${item.location.line}`);
+    lines.push("");
+    lines.push(`  Access: ${item.access}`);
+
+    if (item.evidence.length === 0) {
+      // Absence is the explanation here: nothing was found, and saying so is
+      // more useful than an empty section.
+      lines.push("  Evidence: none detected — this is why it reads as public");
+    } else {
+      lines.push("  Evidence:");
+      for (const step of item.evidence) {
+        // Render the walk from the handler inward, so the chain reads in the
+        // order the code executes.
+        const chain = [...step.via, step.call];
+        chain.forEach((name, index) => {
+          const indent = "    " + "  ".repeat(index);
+          const arrow = index === 0 ? "" : "-> ";
+          lines.push(`${indent}${arrow}${name}()`);
+        });
+        lines.push(`      establishes: ${step.access} (${step.location.file}:${step.location.line})`);
+      }
+    }
+
+    if (item.reaches.length > 0) {
+      lines.push(`  Reaches: ${item.reaches.join(", ")}`);
+    }
+  }
+
   return lines.join("\n");
 }

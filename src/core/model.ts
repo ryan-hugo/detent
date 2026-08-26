@@ -14,6 +14,16 @@ export interface AuthSignal {
   name: string;
   access: AccessLevel;
   location: SourceLocation;
+  /**
+   * Function names traversed from the entry point to reach this call, empty
+   * when the call is written in the handler itself.
+   *
+   * This is the evidence behind an access level: a route can read as
+   * `authenticated` because of a guard two calls away, and without the chain
+   * there is no way to show why. The resolver already computes it; recording it
+   * here is what makes the conclusion explainable rather than asserted.
+   */
+  via?: string[];
 }
 
 export interface SensitiveOperation {

@@ -115,7 +115,15 @@ export function scanSvelteKitProject(projectRoot: string): ApplicationSecurityMo
       for (const call of reachable) {
         const callLocation = { file: relative, line: call.line };
         const access = classifyAuth(call.name, config);
-        if (access) authSignals.push({ name: call.name, access, location: callLocation });
+        // See the Next.js adapter: `via` is the evidence behind the conclusion.
+        if (access) {
+          authSignals.push({
+            name: call.name,
+            access,
+            location: callLocation,
+            ...(call.via.length > 0 ? { via: call.via } : {}),
+          });
+        }
         const category = classifySensitive(call.name, config);
         if (category) sensitiveOperations.push({ expression: call.name, category, location: callLocation });
       }
