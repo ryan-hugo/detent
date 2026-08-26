@@ -126,6 +126,39 @@ An entry point with no guard says so rather than showing an empty section. A rou
 
 `--json` gives the same content for scripts and agents.
 
+## Asking when it changed
+
+`explain` says why a route is classified as it is. `blame` says when that stopped being something else:
+
+```bash
+detent blame --route /api/admin/users
+```
+
+```
+Route: /api/admin/users
+
+  Current access: public
+
+  Posture changed: authenticated -> public
+
+  Changed in: abde06ee  2026-08-14
+    Test Dev  C3: guard removed
+
+  Evidence before:
+    auth()
+
+  Evidence after:
+    none detected
+
+  Removed: auth
+```
+
+This is not `git blame`. It does not ask who edited a line — it scans historical trees with the same scanner and reports the commit where the model's answer changed. It says *changed in*, never *caused by*: the evidence shows the posture differs across that commit, not that anyone intended it.
+
+A route that did not exist is reported as `absent`, never as `public` — those are different states, and confusing them would flag every newly added route as having been exposed.
+
+`--max-commits N` (default 40) and `--since "30 days ago"` bound the search. The walk stops at the first difference, so a recent change costs a few scans rather than the whole limit. When the limit is reached or the clone is shallow, the output says history is incomplete rather than claiming the route never changed.
+
 ## Seeing what reaches what
 
 ```bash

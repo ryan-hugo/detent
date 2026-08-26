@@ -2,7 +2,8 @@ import type { ApplicationSecurityModel } from "../core/model.js";
 import type { SecurityChange } from "../core/diff.js";
 import type { Breach } from "../core/contract.js";
 import type { EnrichedFinding } from "../core/enrich.js";
-import type { Explanation } from "../core/explain.js";
+import type { EvidenceStep, Explanation } from "../core/explain.js";
+import type { BlameResult } from "../core/blame.js";
 
 export function renderModel(model: ApplicationSecurityModel): string {
   const lines: string[] = [];
@@ -114,5 +115,70 @@ export function renderExplanations(explanations: Explanation[]): string {
     }
   }
 
+  return lines.join("\n");
+}
+
+function renderChain(evidence: EvidenceStep[], indent: string): string[] {
+  if (evidence.length === 0) return [`${indent}none detected`];
+  const lines: string[] = [];
+  for (const step of evidence) {
+    [...step.via, step.call].forEach((name, index) => {
+      lines.push(`${indent}${"  ".repeat(index)}${index === 0 ? "" : "-> "}${name}()`);
+    });
+  }
+  return lines;
+}
+
+export function renderBlame(result: BlameResult): string {
+  const lines = [`Route: ${result.route}`, ""];
+  lines.push(
+    result.current.posture === "absent"
+      ? "  Current: not present in the working tree"
+      : `  Current access: ${result.current.posture}`,
+  );
+
+  if (!result.transition || !result.previous) {
+    lines.push("");
+    lines.push(
+      result.commitsScanned === 0
+        ? "  No prior commits touched this project, so there is nothing to compare against."
+        : `  No posture change found in the ${result.commitsScanned} commits examined.`,
+    );
+    if (result.historyIncomplete) {
+      // Absence of evidence is not evidence of absence, and a shallow clone or
+      // a reached limit is exactly that.
+      lines.push("  History is incomplete, so this does not mean the route never changed.");
+    }
+    return lines.join("\n");
+  }
+
+  const from = result.previous.posture;
+  const to = result.current.posture;
+  lines.push("");
+  lines.push(`  Posture changed: ${from} -> ${to}`);
+  lines.push("");
+  // Stated as "changed in", never "caused by": the evidence shows the state
+  // differs across this commit, not that someone intended the change.
+  lines.push(`  Changed in: ${result.transition.sha.slice(0, 8)}  ${result.transition.date.slice(0, 10)}`);
+  lines.push(`    ${result.transition.author}  ${result.transition.subject}`);
+
+  lines.push("");
+  lines.push("  Evidence before:");
+  lines.push(...renderChain(result.previous.evidence, "    "));
+  lines.push("");
+  lines.push("  Evidence after:");
+  lines.push(...renderChain(result.current.evidence, "    "));
+
+  const diff = result.evidenceDiff;
+  if (diff && (diff.removed.length > 0 || diff.added.length > 0)) {
+    lines.push("");
+    if (diff.removed.length > 0) lines.push(`  Removed: ${diff.removed.join(", ")}`);
+    if (diff.added.length > 0) lines.push(`  Added: ${diff.added.join(", ")}`);
+  }
+
+  if (result.historyIncomplete) {
+    lines.push("");
+    lines.push("  History is incomplete; earlier changes may exist beyond what was examined.");
+  }
   return lines.join("\n");
 }

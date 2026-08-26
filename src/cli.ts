@@ -8,9 +8,10 @@ import { CONTRACT_FILENAME, ContractError, checkContract, parseContract } from "
 import { CONFIG_FILENAME, ConfigError } from "./core/config.js";
 import { suggestVocabulary } from "./core/vocabulary.js";
 import { EnrichError, enrichFindings, parseSarif } from "./core/enrich.js";
-import { ExplainError, explain, knownSubjects } from "./core/explain.js";
+import { ExplainError, explain, findEntryPoints, knownSubjects } from "./core/explain.js";
+import { blame } from "./core/blame.js";
 import type { ApplicationSecurityModel } from "./core/model.js";
-import { renderBreaches, renderDiff, renderExplanations, renderModel, renderTriage } from "./reporters/text.js";
+import { renderBlame, renderBreaches, renderDiff, renderExplanations, renderModel, renderTriage } from "./reporters/text.js";
 import { renderContractHtml, renderDiffHtml, renderGraphHtml, renderModelHtml } from "./reporters/html.js";
 import { renderContractMarkdown, renderDiffMarkdown } from "./reporters/markdown.js";
 
@@ -26,6 +27,7 @@ function usage(): never {
       "  diff      [project] [--base REF | --baseline PATH] [--json] [--html PATH] [--markdown]",
       "  contract  [project] [--contract PATH] [--json] [--html PATH] [--markdown]",
       "  explain   [project] --route ROUTE [--json]",
+      "  blame     [project] --route ROUTE [--max-commits N] [--since WHEN] [--json]",
       "  triage    [project] --sarif PATH [--json]",
       "  graph     [project] [--html PATH]",
       "  version",
@@ -212,6 +214,46 @@ try {
     console.log(
       args.includes("--json") ? JSON.stringify(explanations, null, 2) : renderExplanations(explanations),
     );
+  } else if (command === "blame") {
+    const subject = option(args, "--route");
+    if (!subject) {
+      console.error(
+        `blame needs a route: detent blame [project] --route /api/admin/users\n` +
+          `An export name or entry-point id works too.`,
+      );
+      process.exit(2);
+    }
+    if (!isGitRepository(root)) {
+      console.error(`blame needs a git repository, and ${root} is not one.`);
+      process.exit(2);
+    }
+
+    const model = scan(root);
+    // A route absent from both the working tree and history is a typo, not a
+    // finding — say so before spending scans on it.
+    if (findEntryPoints(model, subject).length === 0) {
+      const known = knownSubjects(model);
+      console.error(
+        known.length > 0
+          ? `No entry point matches ${JSON.stringify(subject)}\n\nKnown entry points:\n${known.map((item) => `  ${item}`).join("\n")}`
+          : `No entry point matches ${JSON.stringify(subject)}\n\nNo entry points were discovered in ${root}.`,
+      );
+      process.exit(2);
+    }
+
+    const maxCommits = Number(option(args, "--max-commits") ?? 40);
+    if (!Number.isFinite(maxCommits) || maxCommits < 1) {
+      console.error(`--max-commits must be a positive number.`);
+      process.exit(2);
+    }
+    const since = option(args, "--since");
+
+    const result = blame(root, subject, scan, model, {
+      maxCommits,
+      ...(since ? { since } : {}),
+    });
+
+    console.log(args.includes("--json") ? JSON.stringify(result, null, 2) : renderBlame(result));
   } else if (command === "graph") {
     const model = scan(root);
     const out = option(args, "--html") ?? path.join(root, ".detent", "graph.html");

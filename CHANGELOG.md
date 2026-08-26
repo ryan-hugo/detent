@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`blame`.** Finds the commit where a route stopped being what it was. Walks
+  first-parent history backwards, scanning each tree with the same scanner used
+  everywhere else, and stops at the first posture that differs. Deliberately
+  linear rather than bisecting: posture is not monotonic, so a binary search over
+  `admin -> public -> admin -> public` returns a commit that is not the
+  transition. A route absent from a tree is reported as `absent`, never as
+  `public`. A reached commit limit or a shallow clone is reported as incomplete
+  history rather than as "never changed".
 - **`explain`.** Shows the evidence behind an access level: the call that
   established it and the chain of functions walked to reach it. The resolver
   already computed that chain and the scanner discarded it; `AuthSignal.via`

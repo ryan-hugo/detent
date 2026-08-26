@@ -146,3 +146,60 @@ export function withTree<T>(root: string, ref: string, work: (dir: string) => T)
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
+
+export interface CommitInfo {
+  sha: string;
+  /** Author date, ISO-8601. */
+  date: string;
+  author: string;
+  subject: string;
+}
+
+/** True when the repository was cloned with truncated history. */
+export function isShallow(root: string): boolean {
+  try {
+    return git(root, ["rev-parse", "--is-shallow-repository"]).trim() === "true";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Commits reachable from `ref`, newest first.
+ *
+ * Follows first-parent only. A merge brings in commits that were never on the
+ * main line, and attributing a posture change to one of them would name a
+ * commit that never independently produced that state on this branch. The
+ * merge itself is where the change arrived, which is what first-parent reports.
+ *
+ * `paths` filters to commits that touched those pathspecs. Filtering by file
+ * extension is safe — a posture change requires editing source or config — but
+ * filtering by the route's own file would not be: a guard removed from a shared
+ * helper changes the route without touching it.
+ */
+export function listCommits(
+  root: string,
+  ref: string,
+  options: { limit: number; since?: string; paths?: string[] },
+): CommitInfo[] {
+  const args = [
+    "log",
+    "--first-parent",
+    `--max-count=${Math.max(1, Math.floor(options.limit))}`,
+    // A unit separator cannot appear in these fields, unlike any printable char.
+    "--format=%H%x1f%aI%x1f%an%x1f%s",
+    ref,
+  ];
+  if (options.since) args.push(`--since=${options.since}`);
+  if (options.paths && options.paths.length > 0) args.push("--", ...options.paths);
+
+  return git(root, args)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [sha = "", date = "", author = "", subject = ""] = line.split("\x1f");
+      return { sha, date, author, subject };
+    })
+    .filter((commit) => commit.sha.length > 0);
+}
