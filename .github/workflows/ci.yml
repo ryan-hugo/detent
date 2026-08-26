@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm install --ignore-scripts
+      - run: npm run verify
+
+  security-diff:
+    # Reports how a pull request changes the security model of the fixture app.
+    # Requires full history so the base ref's tree can be read.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm install --ignore-scripts
+      - run: npm run build
+      - name: Security diff against the base branch
+        run: node dist/cli.js diff test/fixtures/next-basic --base "origin/${{ github.base_ref }}"

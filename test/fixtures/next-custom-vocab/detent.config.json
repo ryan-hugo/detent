@@ -1,0 +1,10 @@
+{
+  "guards": {
+    "exigirGestor": "admin",
+    "obterSessao": "authenticated"
+  },
+  "notGuards": ["checkAdminBanner"],
+  "sensitive": {
+    "enviarCobranca": "payment"
+  }
+}

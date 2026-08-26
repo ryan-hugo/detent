@@ -1,0 +1,7 @@
+{
+  "requirements": [
+    { "rule": "entry-point-requires-access", "match": "/api/admin/*", "access": "admin" },
+    { "rule": "env-is-server-only", "name": "STRIPE_SECRET_KEY" },
+    { "rule": "sensitive-operation-requires-guard", "category": "payment" }
+  ]
+}
