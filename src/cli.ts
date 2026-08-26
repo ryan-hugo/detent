@@ -3,15 +3,17 @@ import fs from "node:fs";
 import path from "node:path";
 import { scanNextProject } from "./adapters/nextjs/scan.js";
 import { diffModels } from "./core/diff.js";
-import { ConfigError } from "./core/config.js";
 import { GitError, isGitRepository, resolveRef, withTree } from "./core/git.js";
 import { CONTRACT_FILENAME, ContractError, checkContract, parseContract } from "./core/contract.js";
+import { CONFIG_FILENAME, ConfigError } from "./core/config.js";
+import { suggestVocabulary } from "./core/vocabulary.js";
 import type { ApplicationSecurityModel } from "./core/model.js";
 import { renderBreaches, renderDiff, renderModel } from "./reporters/text.js";
 import { renderContractHtml, renderDiffHtml, renderGraphHtml, renderModelHtml } from "./reporters/html.js";
 
 function usage(): never {
-  console.error(`detent <command> [project]\n\nCommands:\n  inspect [project] [--json] [--html PATH]\n  snapshot [project] [--out PATH]\n  diff [project] [--base REF | --baseline PATH] [--json] [--html PATH]\n  contract [project] [--contract PATH] [--json] [--html PATH]\n  graph [project] [--html PATH]\n  version`);
+  console.error(`detent <command> [project]\n\nCommands:\n  inspect [project] [--json] [--html PATH]\n  snapshot [project] [--out PATH]\n  diff [project] [--base REF | --baseline PATH] [--json] [--html PATH]\n  contract [project] [--contract PATH] [--json] [--html PATH]
+  init [project] [--force]\n  graph [project] [--html PATH]\n  version`);
   process.exit(2);
 }
 
@@ -74,6 +76,34 @@ try {
     else console.log(args.includes("--json") ? JSON.stringify(breaches, null, 2) : renderBreaches(breaches));
     // A breached invariant is not advice. It fails.
     if (breaches.length > 0) process.exitCode = 1;
+  } else if (command === "init") {
+    const model = scanNextProject(root);
+    const suggestions = suggestVocabulary(model.entryPoints);
+    const target = path.join(root, CONFIG_FILENAME);
+
+    if (suggestions.length === 0) {
+      console.log(
+        `No project-specific guards inferred from ${model.entryPoints.length} entry points.\n` +
+          `The built-in vocabulary may already be enough. Add guards by hand if it is not.`,
+      );
+    } else {
+      const guards: Record<string, string> = {};
+      console.log("Inferred from how this project is written:\n");
+      for (const item of suggestions) {
+        guards[item.name] = item.access;
+        console.log(`  ${item.name} -> ${item.access}   ${item.reason}`);
+      }
+      if (fs.existsSync(target) && !args.includes("--force")) {
+        console.log(`\n${CONFIG_FILENAME} already exists. Re-run with --force to overwrite it.`);
+      } else {
+        fs.writeFileSync(target, `${JSON.stringify({ guards }, null, 2)}\n`);
+        console.log(
+          `\nWritten to ${target}\n` +
+            `Review it before trusting it: a wrong mapping here makes the tool believe\n` +
+            `a barrier that is not there.`,
+        );
+      }
+    }
   } else if (command === "graph") {
     const model = scanNextProject(root);
     const out = option(args, "--html") ?? path.join(root, ".detent", "graph.html");

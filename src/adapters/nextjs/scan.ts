@@ -5,6 +5,7 @@ import { deriveFindings } from "../../core/findings.js";
 import { CONFIG_FILENAME, ConfigError, EMPTY_CONFIG, parseConfig } from "../../core/config.js";
 import type { DetentConfig } from "../../core/config.js";
 import { extractModule } from "./extract.js";
+import { createLoader, resolveCalls } from "./resolve.js";
 import type {
   AccessLevel,
   ApplicationSecurityModel,
@@ -71,6 +72,14 @@ function classifyAuth(name: string, config: DetentConfig): AccessLevel | undefin
     .map((word) => word.toLowerCase());
   const joined = words.join(" ");
 
+  // Cryptographic verification is authentication, and stronger than a session
+  // lookup. Stripe's constructEvent throws on a bad signature; a timing-safe
+  // comparison guards a shared secret. Missing these reported real webhooks —
+  // shadcn-ui/taxonomy's Stripe handler among them — as unprotected.
+  if (/\b(constructEvent|verifySignature|verifyWebhook|timingSafeEqual|createHmac|verifyKey)\b/.test(name)) {
+    return "authenticated";
+  }
+
   if (words.includes("admin")) return "admin";
   if (words.some((word) => ["auth", "authenticate", "authorize", "session", "protect"].includes(word))) {
     return "authenticated";
@@ -126,6 +135,7 @@ export function scanNextProject(projectRoot: string): ApplicationSecurityModel {
   if (!fs.existsSync(root)) throw new Error(`Project root does not exist: ${root}`);
 
   const config = loadConfig(root);
+  const loader = createLoader(root, extractModule);
   const files = walk(root);
   const entryPoints: EntryPoint[] = [];
   const clientBoundaries: ClientBoundary[] = [];
@@ -158,7 +168,11 @@ export function scanNextProject(projectRoot: string): ApplicationSecurityModel {
       const authSignals: AuthSignal[] = [];
       const sensitiveOperations: SensitiveOperation[] = [];
 
-      for (const call of fn.calls) {
+      // Follow the handler into what it calls. A thin delegating handler holds
+      // no evidence itself; the guard is one or two calls deeper.
+      const reachable = resolveCalls(root, file, module, fn.calls, loader);
+
+      for (const call of reachable) {
         const callLocation = { file: relative, line: call.line };
         const access = classifyAuth(call.name, config);
         if (access) authSignals.push({ name: call.name, access, location: callLocation });
@@ -167,6 +181,7 @@ export function scanNextProject(projectRoot: string): ApplicationSecurityModel {
       }
 
       const shared = {
+        reachableCalls: [...new Set(reachable.map((call) => call.name))],
         location,
         directives: module.moduleDirectives,
         authSignals,

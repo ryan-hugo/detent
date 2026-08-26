@@ -147,6 +147,35 @@ Outstanding: paths are per-entry-point and do not yet chain through shared
 helpers, so a guard applied one call deep is not drawn. Middleware is not drawn
 either — that is gap 4 in P0.1.
 
+### Go criterion met (2026-08-26)
+
+Three changes, in the order their absence hurt most:
+
+1. **Call resolution.** A handler that delegates carries no evidence of its own;
+   the guard is one call deeper. Following it (bounded to depth 3, cycle-safe,
+   never reading outside the project root) is what separates a tool that fires on
+   every thin handler from one that answers the real question.
+2. **Signature verification is authentication.** `constructEvent` throws on a bad
+   signature and is stronger than a session lookup. Missing it reported real
+   webhooks as unprotected.
+3. **`detent init`.** Requiring a config before the tool is useful was the
+   adoption blocker: a team had to understand the tool before it could help them.
+   Inference reads how the project is written and proposes the vocabulary; the
+   team reviews and owns it. Nothing is applied silently.
+
+Measured after:
+
+| Repository | Findings before | Findings after | Guards detected |
+|---|---|---|---|
+| vercel/commerce | 6 | **0** | n/a (anonymous by design) |
+| shadcn-ui/taxonomy | 1 | **0** | 7/8 |
+| dub | 398 | **106** | 349/720, config self-generated |
+
+Every finding removed was a false positive, verified by reading the source. No
+true positive was lost: the fixture suite and eval expectations are unchanged.
+
+**The go criterion is now met.** A second framework adapter is defensible.
+
 ## Go/no-go criterion
 
 Do not add another framework until at least three real Next.js repositories produce useful output with an acceptable false-positive rate and the model can explain a meaningful PR security diff.

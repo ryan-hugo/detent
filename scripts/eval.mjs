@@ -40,6 +40,20 @@ const cases = [
     expectedRules: ['AUTH001'],
     expectedEntryPoints: 3,
   },
+  {
+    // A guard reached through a helper must silence the rule, not trip it.
+    name: 'next-helper-chain',
+    project: path.join(root, 'test/fixtures/next-helper-chain'),
+    expectedRules: [],
+    expectedEntryPoints: 1,
+  },
+  {
+    // Signature verification is authentication.
+    name: 'next-webhook',
+    project: path.join(root, 'test/fixtures/next-webhook'),
+    expectedRules: [],
+    expectedEntryPoints: 1,
+  },
 ];
 
 // A fixture may declare a contract; if it does, the breach count is an expectation too.

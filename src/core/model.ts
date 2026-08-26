@@ -30,6 +30,12 @@ export interface EntryPoint {
   authSignals: AuthSignal[];
   inferredAccess: AccessLevel;
   sensitiveOperations: SensitiveOperation[];
+  /**
+   * Every callee reachable from this entry point, classified or not.
+   * Vocabulary inference needs the unclassified ones: a project's own guard is
+   * by definition a name the built-in detectors did not recognize.
+   */
+  reachableCalls?: string[];
 }
 
 export interface EnvironmentUsage {

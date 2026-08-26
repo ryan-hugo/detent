@@ -23,12 +23,23 @@ export interface ExtractedFunction {
   calls: ExtractedCall[];
 }
 
+export interface ImportBinding {
+  /** Local name used in this file. */
+  local: string;
+  /** Module specifier exactly as written, e.g. `@/lib/guard`. */
+  from: string;
+}
+
 export interface ExtractedModule {
   /** Directives that apply to the whole module (top of file only). */
   moduleDirectives: string[];
   functions: ExtractedFunction[];
   /** `process.env.X` reads anywhere in the file. */
   envReads: { name: string; line: number }[];
+  /** Every function declared here, exported or not, so calls can be resolved. */
+  localFunctions: Map<string, ExtractedFunction>;
+  /** Imported names, so a call can be traced to the file that defines it. */
+  imports: ImportBinding[];
 }
 
 function lineOf(source: ts.SourceFile, node: ts.Node): number {
@@ -127,6 +138,38 @@ export function extractModule(fileName: string, text: string): ExtractedModule {
 
   const functions: ExtractedFunction[] = [];
   const envReads: { name: string; line: number }[] = [];
+  const localFunctions = new Map<string, ExtractedFunction>();
+  const imports: ImportBinding[] = [];
+
+  // Imports and local declarations first: resolving a guard means knowing both
+  // what this file defines and where a name came from.
+  for (const statement of source.statements) {
+    if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
+      const from = statement.moduleSpecifier.text;
+      const bindings = statement.importClause?.namedBindings;
+      if (statement.importClause?.name) {
+        imports.push({ local: statement.importClause.name.text, from });
+      }
+      if (bindings && ts.isNamedImports(bindings)) {
+        for (const element of bindings.elements) imports.push({ local: element.name.text, from });
+      }
+      continue;
+    }
+
+    if (ts.isFunctionDeclaration(statement) && statement.name) {
+      localFunctions.set(statement.name.text, describe(source, statement.name.text, statement, statement));
+      continue;
+    }
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+        const direct = functionOf(declaration.initializer);
+        if (direct) {
+          localFunctions.set(declaration.name.text, describe(source, declaration.name.text, direct, declaration));
+        }
+      }
+    }
+  }
 
   for (const statement of source.statements) {
     if (!hasExportModifier(statement)) continue;
@@ -181,5 +224,7 @@ export function extractModule(fileName: string, text: string): ExtractedModule {
     moduleDirectives: directivesOf(source.statements),
     functions,
     envReads,
+    localFunctions,
+    imports,
   };
 }

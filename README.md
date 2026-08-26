@@ -105,6 +105,22 @@ network ── no barrier ── DELETE /api/admin/users ── database-write
 
 Paths that reach a sensitive operation with no barrier sort to the top, because those are the ones worth looking at first.
 
+## Getting started in one command
+
+```bash
+npx detent init
+```
+
+Detent reads how your project is written and infers your own guard vocabulary. A wrapper that fronts most of your entry points is doing one job, and it is not data access. On a real monorepo of 720 entry points this found `withWorkspace` on its own in under eight seconds:
+
+```
+Inferred from how this project is written:
+
+  withWorkspace -> authenticated   wraps 257 of 720 entry points
+```
+
+It writes `detent.config.json` for you to review. Nothing is applied silently — evidence proposes, you decide.
+
 ## Teaching it your vocabulary
 
 The built-in detectors recognize common English guard names. Your codebase probably names things its own way, which goes wrong in both directions: a real guard reads as `public`, or a function whose name merely contains "admin" is mistaken for an authorization barrier.
