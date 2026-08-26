@@ -1,19 +1,37 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { scanNextProject } from "./adapters/nextjs/scan.js";
+import { AdapterError, scanProject } from "./adapters/detect.js";
 import { diffModels } from "./core/diff.js";
 import { GitError, isGitRepository, resolveRef, withTree } from "./core/git.js";
 import { CONTRACT_FILENAME, ContractError, checkContract, parseContract } from "./core/contract.js";
 import { CONFIG_FILENAME, ConfigError } from "./core/config.js";
 import { suggestVocabulary } from "./core/vocabulary.js";
+import { EnrichError, enrichFindings, parseSarif } from "./core/enrich.js";
 import type { ApplicationSecurityModel } from "./core/model.js";
-import { renderBreaches, renderDiff, renderModel } from "./reporters/text.js";
+import { renderBreaches, renderDiff, renderModel, renderTriage } from "./reporters/text.js";
 import { renderContractHtml, renderDiffHtml, renderGraphHtml, renderModelHtml } from "./reporters/html.js";
+import { renderContractMarkdown, renderDiffMarkdown } from "./reporters/markdown.js";
 
 function usage(): never {
-  console.error(`detent <command> [project]\n\nCommands:\n  inspect [project] [--json] [--html PATH]\n  snapshot [project] [--out PATH]\n  diff [project] [--base REF | --baseline PATH] [--json] [--html PATH]\n  contract [project] [--contract PATH] [--json] [--html PATH]
-  init [project] [--force]\n  graph [project] [--html PATH]\n  version`);
+  console.error(
+    [
+      "detent <command> [project]",
+      "",
+      "Commands:",
+      "  init      [project] [--force]",
+      "  inspect   [project] [--json] [--html PATH]",
+      "  snapshot  [project] [--out PATH]",
+      "  diff      [project] [--base REF | --baseline PATH] [--json] [--html PATH] [--markdown]",
+      "  contract  [project] [--contract PATH] [--json] [--html PATH] [--markdown]",
+      "  triage    [project] --sarif PATH [--json]",
+      "  graph     [project] [--html PATH]",
+      "  version",
+      "",
+      "Global:",
+      "  --framework nextjs|sveltekit   skip auto-detection",
+    ].join("\n"),
+  );
   process.exit(2);
 }
 
@@ -29,6 +47,23 @@ function writeHtml(target: string, html: string): void {
   console.error(`HTML report written to ${out}`);
 }
 
+/**
+ * Writes markdown where a reviewer will see it.
+ *
+ * Prefers `$GITHUB_STEP_SUMMARY`, which GitHub renders on the job page. It is a
+ * plain file the runner provides, so no token and no network call are involved.
+ * Falls back to stdout everywhere else.
+ */
+function writeMarkdown(body: string): void {
+  const summary = process.env?.["GITHUB_STEP_SUMMARY"];
+  if (summary) {
+    fs.appendFileSync(summary, body);
+    console.error(`Summary written to ${summary}`);
+    return;
+  }
+  console.log(body);
+}
+
 function readModel(file: string): ApplicationSecurityModel {
   return JSON.parse(fs.readFileSync(file, "utf8")) as ApplicationSecurityModel;
 }
@@ -42,17 +77,28 @@ if (command === "version") {
   process.exit(0);
 }
 
+const FRAMEWORKS = ["nextjs", "sveltekit"] as const;
+const requested = option(args, "--framework");
+if (requested !== undefined && !FRAMEWORKS.includes(requested as (typeof FRAMEWORKS)[number])) {
+  // Silently falling back would scan with the wrong adapter and report a model
+  // the user never asked for, which is worse than refusing.
+  console.error(`Unknown framework: ${requested}\nExpected one of ${FRAMEWORKS.join(", ")}.`);
+  process.exit(2);
+}
+const framework = requested as (typeof FRAMEWORKS)[number] | undefined;
+const scan = (dir: string) => scanProject(dir, framework);
+
 const project = args[1] && !args[1].startsWith("--") ? args[1] : ".";
 const root = path.resolve(project);
 
 try {
   if (command === "inspect") {
-    const model = scanNextProject(root);
+    const model = scan(root);
     const htmlOut = option(args, "--html");
     if (htmlOut) writeHtml(htmlOut, renderModelHtml(model));
     else console.log(args.includes("--json") ? JSON.stringify(model, null, 2) : renderModel(model));
   } else if (command === "snapshot") {
-    const model = scanNextProject(root);
+    const model = scan(root);
     const out = path.resolve(option(args, "--out") ?? path.join(root, ".detent", "model.json"));
     fs.mkdirSync(path.dirname(out), { recursive: true });
     fs.writeFileSync(out, `${JSON.stringify(model, null, 2)}\n`);
@@ -69,15 +115,16 @@ try {
     } catch (cause) {
       throw new ContractError(`${CONTRACT_FILENAME}: ${(cause as Error).message}`);
     }
-    const model = scanNextProject(root);
+    const model = scan(root);
     const breaches = checkContract(parsed, model);
     const htmlOut = option(args, "--html");
     if (htmlOut) writeHtml(htmlOut, renderContractHtml(breaches, parsed.requirements.length, root));
+    else if (args.includes("--markdown")) writeMarkdown(renderContractMarkdown(breaches, parsed.requirements.length));
     else console.log(args.includes("--json") ? JSON.stringify(breaches, null, 2) : renderBreaches(breaches));
     // A breached invariant is not advice. It fails.
     if (breaches.length > 0) process.exitCode = 1;
   } else if (command === "init") {
-    const model = scanNextProject(root);
+    const model = scan(root);
     const suggestions = suggestVocabulary(model.entryPoints);
     const target = path.join(root, CONFIG_FILENAME);
 
@@ -104,8 +151,37 @@ try {
         );
       }
     }
+  } else if (command === "triage") {
+    const input = option(args, "--sarif");
+    if (!input) {
+      console.error(
+        `triage needs a SARIF file: detent triage [project] --sarif results.sarif\n` +
+          `Produce one with 'semgrep --sarif -o results.sarif' or from a CodeQL run.`,
+      );
+      process.exit(2);
+    }
+    const file = path.resolve(input);
+    if (!fs.existsSync(file)) {
+      console.error(`SARIF file not found: ${file}`);
+      process.exit(2);
+    }
+    let external;
+    try {
+      external = parseSarif(JSON.parse(fs.readFileSync(file, "utf8")));
+    } catch (cause) {
+      throw new EnrichError(`${input}: ${(cause as Error).message}`);
+    }
+
+    const enriched = enrichFindings(scan(root), external);
+    if (args.includes("--json")) {
+      console.log(JSON.stringify(enriched, null, 2));
+    } else {
+      console.log(renderTriage(enriched));
+    }
+    // Anything a stranger can reach fails the build; the rest is reported.
+    if (enriched.some((finding) => finding.priority === "critical")) process.exitCode = 1;
   } else if (command === "graph") {
-    const model = scanNextProject(root);
+    const model = scan(root);
     const out = option(args, "--html") ?? path.join(root, ".detent", "graph.html");
     writeHtml(out, renderGraphHtml(model));
   } else if (command === "diff") {
@@ -121,7 +197,7 @@ try {
       const sha = resolveRef(root, base);
       console.error(`Comparing against ${base} (${sha.slice(0, 8)})`);
       before = withTree(root, base, (dir) => {
-        const model = scanNextProject(dir);
+        const model = scan(dir);
         // The temp path is an implementation detail; report the real root.
         return { ...model, root };
       });
@@ -134,10 +210,11 @@ try {
       before = readModel(baseline);
     }
 
-    const after = scanNextProject(root);
+    const after = scan(root);
     const changes = diffModels(before, after);
     const diffHtmlOut = option(args, "--html");
     if (diffHtmlOut) writeHtml(diffHtmlOut, renderDiffHtml(changes, root));
+    else if (args.includes("--markdown")) writeMarkdown(renderDiffMarkdown(changes, base));
     else console.log(args.includes("--json") ? JSON.stringify(changes, null, 2) : renderDiff(changes));
     if (changes.some((change) => change.severity === "critical" || change.severity === "high")) process.exitCode = 1;
   } else {
@@ -151,6 +228,14 @@ try {
   }
   if (error instanceof ContractError) {
     console.error(`${error.message}`);
+    process.exit(2);
+  }
+  if (error instanceof AdapterError) {
+    console.error(error.message);
+    process.exit(2);
+  }
+  if (error instanceof EnrichError) {
+    console.error(`${error.message}\n\nExpected SARIF 2.1.0, as produced by semgrep --sarif or CodeQL.`);
     process.exit(2);
   }
   if (error instanceof GitError) {

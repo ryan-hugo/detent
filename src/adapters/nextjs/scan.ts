@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
+import { loadConfig, rel, walk } from "../shared.js";
+import { classifyAuth, classifySensitive } from "../../core/classify.js";
 import { inferAccess } from "../../core/access.js";
 import { deriveFindings } from "../../core/findings.js";
-import { CONFIG_FILENAME, ConfigError, EMPTY_CONFIG, parseConfig } from "../../core/config.js";
-import type { DetentConfig } from "../../core/config.js";
-import { extractModule } from "./extract.js";
-import { createLoader, resolveCalls } from "./resolve.js";
+import { extractModule } from "../extract.js";
+import { createLoader, resolveCalls } from "../resolve.js";
 import type {
   AccessLevel,
   ApplicationSecurityModel,
@@ -17,107 +17,6 @@ import type {
 } from "../../core/model.js";
 
 const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]);
-const SKIP_DIRS = new Set(["node_modules", ".next", "dist", ".git", "coverage"]);
-
-/**
- * Collects scannable files under `root`.
- *
- * Directory symlinks are not followed. A link pointing at an ancestor turns the
- * walk into an infinite descent that invents one phantom route per level, and a
- * link pointing outside `root` would scan a tree the user did not ask about.
- * Neither is worth the rare monorepo that links its packages.
- */
-function walk(root: string, depth = 0): string[] {
-  if (depth > 40) return []; // pathological nesting, not real project layout
-  const out: string[] = [];
-  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-    if (entry.isSymbolicLink()) continue;
-    if (entry.isDirectory() && SKIP_DIRS.has(entry.name)) continue;
-    const full = path.join(root, entry.name);
-    if (entry.isDirectory()) out.push(...walk(full, depth + 1));
-    else if (entry.isFile() && /\.(ts|tsx)$/.test(entry.name) && !entry.name.endsWith(".d.ts")) {
-      out.push(full);
-    }
-  }
-  return out;
-}
-
-function rel(root: string, file: string): string {
-  return path.relative(root, file).split(path.sep).join("/");
-}
-
-/** Last segment of a dotted callee, so `guards.requireAdmin` matches `requireAdmin`. */
-function baseName(name: string): string {
-  const parts = name.split(".");
-  return parts[parts.length - 1] ?? name;
-}
-
-function classifyAuth(name: string, config: DetentConfig): AccessLevel | undefined {
-  // An explicit denial always wins, including over the built-in detectors.
-  if (config.notGuards.includes(name) || config.notGuards.includes(baseName(name))) {
-    return undefined;
-  }
-  // An explicit mapping is stronger evidence than a name heuristic.
-  const configured = config.guards[name] ?? config.guards[baseName(name)];
-  if (configured) return configured;
-
-  // Match whole words, not substrings. Real code is full of names that merely
-  // contain these letters — `oAuthAppSchema.parse` is a Zod validator and
-  // `stripe.billingPortal.sessions.create` opens a payment session; neither is
-  // an authorization barrier, and believing them repeats the dead-text bug.
-  const words = baseName(name)
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .split(/[^A-Za-z0-9]+/)
-    .filter(Boolean)
-    .map((word) => word.toLowerCase());
-  const joined = words.join(" ");
-
-  // Cryptographic verification is authentication, and stronger than a session
-  // lookup. Stripe's constructEvent throws on a bad signature; a timing-safe
-  // comparison guards a shared secret. Missing these reported real webhooks —
-  // shadcn-ui/taxonomy's Stripe handler among them — as unprotected.
-  if (/\b(constructEvent|verifySignature|verifyWebhook|timingSafeEqual|createHmac|verifyKey)\b/.test(name)) {
-    return "authenticated";
-  }
-
-  if (words.includes("admin")) return "admin";
-  if (words.some((word) => ["auth", "authenticate", "authorize", "session", "protect"].includes(word))) {
-    return "authenticated";
-  }
-  if (/\b(current|require|get|ensure) user\b/.test(joined)) return "authenticated";
-  return undefined;
-}
-
-function classifySensitive(name: string, config: DetentConfig): SensitiveOperation["category"] | undefined {
-  const configured = config.sensitive[name] ?? config.sensitive[baseName(name)];
-  if (configured) return configured;
-
-  if (/stripe\.(refunds|paymentIntents|charges)\./i.test(name)) return "payment";
-  if (/\.(create|update|delete|upsert|execute|executeRaw)$/i.test(name) && /(db|prisma|database|repo|repository)/i.test(name)) return "database-write";
-  if (/^(fs\.|.*\.writeFile|.*\.rm|.*\.unlink)/i.test(name)) return "filesystem";
-  if (/(exec|spawn|execFile)$/i.test(name)) return "process";
-  return undefined;
-}
-
-/**
- * Reads `detent.config.json` from the project root, if present.
- * The file is parsed as JSON — never imported — so it cannot execute code.
- */
-function loadConfig(root: string): DetentConfig {
-  const file = path.join(root, CONFIG_FILENAME);
-  if (!fs.existsSync(file)) return EMPTY_CONFIG;
-  let raw: unknown;
-  try {
-    raw = JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch (cause) {
-    throw new ConfigError(`${CONFIG_FILENAME} is not valid JSON: ${(cause as Error).message}`);
-  }
-  try {
-    return parseConfig(raw);
-  } catch (cause) {
-    throw new ConfigError(`${CONFIG_FILENAME}: ${(cause as Error).message}`);
-  }
-}
 
 function routeFromFile(root: string, file: string): string | undefined {
   const normalized = rel(root, file);

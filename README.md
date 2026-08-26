@@ -10,7 +10,7 @@ Instead of asking only “does this repository match a vulnerability pattern?”
 
 > **What security-relevant behavior exists in this application, and what did my change alter?**
 
-The first adapter targets **Next.js App Router + TypeScript**.
+Adapters target **Next.js App Router** and **SvelteKit**, both TypeScript.
 
 ## Why this exists
 
@@ -31,11 +31,15 @@ node dist/cli.js inspect ./your-next-app
 Commands:
 
 ```bash
-detent inspect [project] [--json] [--html PATH]
+detent inspect  [project] [--json] [--html PATH]
 detent snapshot [project] [--out PATH]
-detent diff [project] [--base REF | --baseline PATH] [--json] [--html PATH]
-detent contract [project] [--contract PATH] [--json] [--html PATH]
-detent graph [project] [--html PATH]
+detent diff     [project] [--base REF | --baseline PATH] [--json] [--html PATH] [--markdown]
+detent contract [project] [--contract PATH] [--json] [--html PATH] [--markdown]
+detent triage   [project] --sarif PATH [--json]
+detent init     [project] [--force]
+detent graph    [project] [--html PATH]
+
+# global: --framework nextjs|sveltekit  (skips auto-detection)
 ```
 
 `inspect` currently discovers:
@@ -73,10 +77,14 @@ A finding is the tool's opinion, and you can argue with it. A contract is your t
   "requirements": [
     { "rule": "entry-point-requires-access", "match": "/api/admin/*", "access": "admin" },
     { "rule": "env-is-server-only", "name": "STRIPE_SECRET_KEY" },
-    { "rule": "sensitive-operation-requires-guard", "category": "payment" }
+    { "rule": "sensitive-operation-requires-guard", "category": "payment" },
+    { "rule": "siblings-agree-on-access", "match": "/api/admin/*" },
+    { "rule": "no-public-entry-point", "match": "/api/internal/*" }
   ]
 }
 ```
+
+The last two need no per-route declaration, which is what makes them hold up over time. `siblings-agree-on-access` catches the one route in a group that someone forgot to guard; `no-public-entry-point` catches a route that did not exist when the contract was written.
 
 ```bash
 detent contract
@@ -104,6 +112,39 @@ network ── no barrier ── DELETE /api/admin/users ── database-write
 ```
 
 Paths that reach a sensitive operation with no barrier sort to the top, because those are the ones worth looking at first.
+
+## In a pull request
+
+```yaml
+- run: npx detent diff --base "origin/${{ github.base_ref }}" --markdown
+```
+
+Writes the security diff to the job summary, where the reviewer already is. It is a file the runner provides — no token, no API call, nothing leaves the machine. The step fails when a change weakens the model.
+
+## Triaging another scanner's output
+
+Semgrep and CodeQL answer *is this line dangerous*. They cannot answer *can a stranger reach it*. Detent can, so the two compose:
+
+```bash
+semgrep --sarif -o results.sarif
+npx detent triage --sarif results.sarif
+```
+
+```
+CRITICAL sql-injection
+  app/actions/billing.ts:4
+  reachable at: public via 2 entry points
+
+LOW weak-random
+  lib/unused-helper.ts:9
+  not on any known entry-point path
+```
+
+Same rules, same severities from the scanner — reordered by whether anyone can actually get there. Only publicly reachable findings fail the build.
+
+## Frameworks
+
+Next.js App Router and SvelteKit. The adapter is chosen from your `package.json`, falling back to project layout; `--framework nextjs|sveltekit` overrides it.
 
 ## Getting started in one command
 

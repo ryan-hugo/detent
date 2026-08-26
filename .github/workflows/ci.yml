@@ -36,4 +36,4 @@ jobs:
       - run: npm install --ignore-scripts
       - run: npm run build
       - name: Security diff against the base branch
-        run: node dist/cli.js diff test/fixtures/next-basic --base "origin/${{ github.base_ref }}"
+        run: node dist/cli.js diff test/fixtures/next-basic --base "origin/${{ github.base_ref }}" --markdown

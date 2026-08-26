@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **SvelteKit adapter.** `+server.ts` method exports, `export const actions = {…}`
+  form actions (one entry point per key), and server `load`. The client boundary
+  follows SvelteKit's filename convention rather than a directive, and
+  `$env/static/public` is treated the way `NEXT_PUBLIC_` is. The adapter is
+  chosen from `package.json`, falling back to layout; `--framework` overrides it.
+- **Two contract invariants that need no per-route declaration.**
+  `siblings-agree-on-access` catches the one route in a group somebody forgot to
+  guard; `no-public-entry-point` catches a route added after the contract was
+  written.
+- **`--markdown` for `diff` and `contract`.** Writes to `$GITHUB_STEP_SUMMARY`
+  when present — a file the runner provides, so no token and no network call —
+  and to stdout otherwise.
+- **`triage`.** Reads SARIF from Semgrep or CodeQL and re-prioritizes it by
+  reachability. A SQL injection on a public route and the same rule behind an
+  admin guard are the same finding to a scanner and very different problems; only
+  the publicly reachable ones fail the build.
+- `npm run hygiene`, wired into `verify`: asserts the subprocess boundary
+  (only `core/git.ts` may spawn), rejects suppressed type errors and leftover
+  TODOs, and catches files corrupted by shell-escaping accidents.
+
 - `init` — infers the project's own guard vocabulary from how the code is written
   and writes `detent.config.json` for review. Removes the chicken-and-egg problem
   where the tool needed configuration before it could be useful.

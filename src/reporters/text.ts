@@ -1,6 +1,7 @@
 import type { ApplicationSecurityModel } from "../core/model.js";
 import type { SecurityChange } from "../core/diff.js";
 import type { Breach } from "../core/contract.js";
+import type { EnrichedFinding } from "../core/enrich.js";
 
 export function renderModel(model: ApplicationSecurityModel): string {
   const lines: string[] = [];
@@ -46,6 +47,33 @@ export function renderBreaches(breaches: Breach[]): string {
     lines.push(`  expected: ${breach.expectation}`);
     lines.push(`  actual:   ${breach.actual}`);
     lines.push(`  subject:  ${breach.subject}`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+export function renderTriage(findings: EnrichedFinding[]): string {
+  if (findings.length === 0) return "Triage\n\nNo external findings to triage.";
+
+  const reachable = findings.filter((finding) => finding.priority === "critical").length;
+  const lines = [
+    "Triage",
+    "",
+    reachable > 0
+      ? `${reachable} of ${findings.length} reachable from a public entry point.`
+      : `${findings.length} findings, none reachable from a public entry point.`,
+    "",
+  ];
+
+  for (const finding of findings) {
+    lines.push(`${finding.priority.toUpperCase()} ${finding.ruleId}`);
+    lines.push(`  ${finding.file}:${finding.line}`);
+    lines.push(
+      finding.reachedBy.length > 0
+        ? `  reachable at: ${finding.reachableAt} via ${finding.reachedBy.length} entry ${finding.reachedBy.length === 1 ? "point" : "points"}`
+        : `  not on any known entry-point path`,
+    );
+    if (finding.message) lines.push(`  ${finding.message}`);
     lines.push("");
   }
   return lines.join("\n");

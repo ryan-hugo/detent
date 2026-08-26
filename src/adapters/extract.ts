@@ -28,6 +28,8 @@ export interface ImportBinding {
   local: string;
   /** Module specifier exactly as written, e.g. `@/lib/guard`. */
   from: string;
+  /** Line the import appears on, so an env read can point at real evidence. */
+  line: number;
 }
 
 export interface ExtractedModule {
@@ -147,11 +149,14 @@ export function extractModule(fileName: string, text: string): ExtractedModule {
     if (ts.isImportDeclaration(statement) && ts.isStringLiteral(statement.moduleSpecifier)) {
       const from = statement.moduleSpecifier.text;
       const bindings = statement.importClause?.namedBindings;
+      const line = lineOf(source, statement);
       if (statement.importClause?.name) {
-        imports.push({ local: statement.importClause.name.text, from });
+        imports.push({ local: statement.importClause.name.text, from, line });
       }
       if (bindings && ts.isNamedImports(bindings)) {
-        for (const element of bindings.elements) imports.push({ local: element.name.text, from });
+        for (const element of bindings.elements) {
+          imports.push({ local: element.name.text, from, line });
+        }
       }
       continue;
     }
@@ -189,6 +194,25 @@ export function extractModule(fileName: string, text: string): ExtractedModule {
           continue;
         }
 
+        // Object of handlers: `export const actions = { default: …, save: … }`.
+        // SvelteKit form actions take this shape; each property is its own
+        // entry point, named `actions.<key>` so the id stays unambiguous.
+        if (ts.isObjectLiteralExpression(declaration.initializer)) {
+          for (const property of declaration.initializer.properties) {
+            if (!ts.isPropertyAssignment(property) && !ts.isMethodDeclaration(property)) continue;
+            const key = property.name;
+            if (!key || (!ts.isIdentifier(key) && !ts.isStringLiteral(key))) continue;
+            const fn = ts.isMethodDeclaration(property)
+              ? property
+              : functionOf(property.initializer);
+            if (!fn) continue;
+            functions.push(
+              describe(source, `${declaration.name.text}.${key.text}`, fn, property),
+            );
+          }
+          continue;
+        }
+
         // Wrapped handler: `export const DELETE = withAdmin(async () => {…})`.
         // The wrapper is recorded as a call so it can act as evidence, and the
         // inner function body is still scanned. This closes gap 3.
@@ -206,6 +230,15 @@ export function extractModule(fileName: string, text: string): ExtractedModule {
           });
         }
       }
+    }
+  }
+
+  // SvelteKit exposes configuration as named imports from `$env/*` rather than
+  // through `process.env`, so both shapes have to be recorded for the model to
+  // mean the same thing across adapters.
+  for (const binding of imports) {
+    if (binding.from.startsWith("$env/")) {
+      envReads.push({ name: binding.local, line: binding.line });
     }
   }
 

@@ -1,5 +1,8 @@
 export type AccessLevel = "public" | "authenticated" | "admin" | "unknown";
 
+/** Frameworks with an adapter. Widening this is an adapter decision, not a rule one. */
+export type FrameworkName = "nextjs" | "sveltekit";
+
 export type EntryPointKind = "route-handler" | "server-action";
 
 export interface SourceLocation {
@@ -65,7 +68,7 @@ export interface ApplicationSecurityModel {
   generatedAt: string;
   root: string;
   framework: {
-    name: "nextjs";
+    name: FrameworkName;
     confidence: number;
   };
   entryPoints: EntryPoint[];

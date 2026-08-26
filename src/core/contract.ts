@@ -16,7 +16,11 @@ export type Requirement =
   /** An environment variable must never be readable by the client. */
   | { rule: "env-is-server-only"; name: string }
   /** Any entry point performing this operation category must carry a guard. */
-  | { rule: "sensitive-operation-requires-guard"; category: string };
+  | { rule: "sensitive-operation-requires-guard"; category: string }
+  /** Every entry point matching the pattern must sit at the same access level. */
+  | { rule: "siblings-agree-on-access"; match: string }
+  /** No entry point matching the pattern may be public. */
+  | { rule: "no-public-entry-point"; match: string };
 
 export interface SecurityContract {
   requirements: Requirement[];
@@ -88,8 +92,13 @@ export function parseContract(raw: unknown): SecurityContract {
       if (rule === "sensitive-operation-requires-guard") {
         return { rule, category: requireString(item["category"], "category", index) };
       }
+      if (rule === "siblings-agree-on-access" || rule === "no-public-entry-point") {
+        return { rule, match: requireString(item["match"], "match", index) };
+      }
       throw new ContractError(
-        `requirements[${index}].rule is ${JSON.stringify(rule)}; expected entry-point-requires-access, env-is-server-only, or sensitive-operation-requires-guard`,
+        `requirements[${index}].rule is ${JSON.stringify(rule)}; expected one of ` +
+          `entry-point-requires-access, env-is-server-only, sensitive-operation-requires-guard, ` +
+          `siblings-agree-on-access, no-public-entry-point`,
       );
     }),
   };
@@ -147,17 +156,60 @@ export function checkContract(
       continue;
     }
 
-    for (const entry of model.entryPoints) {
-      const performs = entry.sensitiveOperations.filter(
-        (operation) => operation.category === requirement.category,
-      );
-      if (performs.length === 0 || entry.authSignals.length > 0) continue;
+    if (requirement.rule === "sensitive-operation-requires-guard") {
+      for (const entry of model.entryPoints) {
+        const performs = entry.sensitiveOperations.filter(
+          (operation) => operation.category === requirement.category,
+        );
+        if (performs.length === 0 || entry.authSignals.length > 0) continue;
+        breaches.push({
+          rule: requirement.rule,
+          expectation: `${requirement.category} requires a guard`,
+          actual: "no authorization signal detected",
+          subject: entry.id,
+          location: performs[0]?.location ?? entry.location,
+        });
+      }
+      continue;
+    }
+
+    if (requirement.rule === "no-public-entry-point") {
+      // Catches the case an access-level requirement misses: a route that did
+      // not exist when the contract was written cannot be listed by name.
+      for (const entry of model.entryPoints) {
+        const subject = entry.route ?? entry.exportName;
+        if (!matches(requirement.match, subject)) continue;
+        if (entry.inferredAccess === "public") {
+          breaches.push({
+            rule: requirement.rule,
+            expectation: `nothing under ${requirement.match} may be public`,
+            actual: "public",
+            subject: entry.id,
+            location: entry.location,
+          });
+        }
+      }
+      continue;
+    }
+
+    // siblings-agree-on-access: an inconsistent group is the shape of a route
+    // someone forgot to protect, and it needs no per-route declaration.
+    const group = model.entryPoints.filter((entry) =>
+      matches(requirement.match, entry.route ?? entry.exportName),
+    );
+    if (group.length < 2) continue;
+
+    const strongest = group.reduce((best, entry) =>
+      ACCESS_RANK[entry.inferredAccess] > ACCESS_RANK[best.inferredAccess] ? entry : best,
+    );
+    for (const entry of group) {
+      if (entry.inferredAccess === strongest.inferredAccess) continue;
       breaches.push({
         rule: requirement.rule,
-        expectation: `${requirement.category} requires a guard`,
-        actual: "no authorization signal detected",
+        expectation: `${requirement.match} must agree on access; its strongest is ${strongest.inferredAccess}`,
+        actual: entry.inferredAccess,
         subject: entry.id,
-        location: performs[0]?.location ?? entry.location,
+        location: entry.location,
       });
     }
   }

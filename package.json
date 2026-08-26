@@ -41,11 +41,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node --test test/*.test.mjs",
     "evals": "npm run build && node scripts/eval.mjs",
-    "verify": "npm run typecheck && npm run test && npm run evals",
+    "verify": "npm run hygiene && npm run typecheck && npm run test && npm run evals",
     "inspect:fixture": "npm run build && node dist/cli.js inspect test/fixtures/next-basic",
     "snapshot:fixture": "npm run build && node dist/cli.js snapshot test/fixtures/next-basic --out test/fixtures/next-basic/.detent/model.json",
     "report:fixture": "npm run build && node dist/cli.js inspect test/fixtures/next-basic --html .detent/report.html",
-    "prepublishOnly": "npm run verify"
+    "prepublishOnly": "npm run verify",
+    "hygiene": "node scripts/check-hygiene.mjs"
   },
   "dependencies": {
     "typescript": "^6.0.0"

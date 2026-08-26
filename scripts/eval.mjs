@@ -2,6 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fs from 'node:fs';
 import { scanNextProject } from '../dist/adapters/nextjs/scan.js';
+import { scanSvelteKitProject } from '../dist/adapters/sveltekit/scan.js';
 import { checkContract, parseContract } from '../dist/core/contract.js';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -54,6 +55,14 @@ const cases = [
     expectedRules: [],
     expectedEntryPoints: 1,
   },
+  {
+    // Second adapter: the same model, a different framework's conventions.
+    name: 'sveltekit-basic',
+    project: path.join(root, 'test/fixtures/sveltekit-basic'),
+    scan: scanSvelteKitProject,
+    expectedRules: ['AUTH001', 'ENV001'],
+    expectedEntryPoints: 4,
+  },
 ];
 
 // A fixture may declare a contract; if it does, the breach count is an expectation too.
@@ -63,7 +72,7 @@ const contractCases = [
 
 let failures = 0;
 for (const item of cases) {
-  const model = scanNextProject(item.project);
+  const model = (item.scan ?? scanNextProject)(item.project);
   const rules = new Set(model.findings.map((finding) => finding.ruleId));
   const missing = item.expectedRules.filter((rule) => !rules.has(rule));
   const pass = missing.length === 0 && model.entryPoints.length === item.expectedEntryPoints;
