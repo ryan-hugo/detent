@@ -23,6 +23,15 @@ export interface ResolvedCall extends ExtractedCall {
   depth: number;
   /** Chain of function names traversed to reach it, for evidence. */
   via: string[];
+  /**
+   * Project-relative file whose body contained this call, when known.
+   *
+   * A name alone does not identify a symbol: two modules can each export
+   * `requireUser`, and treating them as one would merge unrelated impact. The
+   * walk already tracks the file it is reading; recording it here is what lets
+   * a caller tell those two apart.
+   */
+  definedIn?: string;
 }
 
 export interface ModuleLoader {
@@ -102,7 +111,8 @@ export function resolveCalls(
   calls: ExtractedCall[],
   loader: ModuleLoader,
 ): ResolvedCall[] {
-  const out: ResolvedCall[] = calls.map((call) => ({ ...call, depth: 0, via: [] }));
+  const rel = (absolute: string) => path.relative(root, absolute).split(path.sep).join("/");
+  const out: ResolvedCall[] = calls.map((call) => ({ ...call, depth: 0, via: [], definedIn: rel(file) }));
   const seen = new Set<string>();
 
   const walk = (
@@ -124,7 +134,7 @@ export function resolveCalls(
         seen.add(key);
         const chain = [...via, name];
         for (const inner of local.calls) {
-          out.push({ ...inner, depth: depth + 1, via: chain });
+          out.push({ ...inner, depth: depth + 1, via: chain, definedIn: rel(currentFile) });
         }
         walk(currentFile, currentModule, local.calls, depth + 1, chain);
         continue;
@@ -144,7 +154,7 @@ export function resolveCalls(
       seen.add(key);
       const chain = [...via, name];
       for (const inner of fn.calls) {
-        out.push({ ...inner, depth: depth + 1, via: chain });
+        out.push({ ...inner, depth: depth + 1, via: chain, definedIn: rel(target) });
       }
       walk(target, imported, fn.calls, depth + 1, chain);
     }

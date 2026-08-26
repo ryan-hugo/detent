@@ -32,6 +32,24 @@ export interface SensitiveOperation {
   location: SourceLocation;
 }
 
+export interface ReachableCall {
+  /** Callee text as written, e.g. `guards.requireAdmin`. */
+  name: string;
+  /**
+   * Project-relative file whose body contains this call site.
+   *
+   * This is where the call is written, not where the callee is declared —
+   * following a name to its declaration would need module resolution, which is
+   * out of scope. It still gives a symbol a stable identity: two modules that
+   * each call their own `requireUser` produce two distinct call sites.
+   */
+  callSite: string;
+  /** 0 when written in the entry point itself, higher through helpers. */
+  depth: number;
+  /** Functions traversed from the entry point to reach it. */
+  via: string[];
+}
+
 export interface EntryPoint {
   id: string;
   kind: EntryPointKind;
@@ -49,6 +67,15 @@ export interface EntryPoint {
    * by definition a name the built-in detectors did not recognize.
    */
   reachableCalls?: string[];
+  /**
+   * The same reachable calls, qualified by the file whose body contained them
+   * and by how far the resolver walked to get there.
+   *
+   * `reachableCalls` carries names only, which cannot distinguish two modules
+   * that each export `requireUser`. Impact analysis has to tell them apart, so
+   * it needs the file as well; the resolver already knew it.
+   */
+  reachable?: ReachableCall[];
 }
 
 export interface EnvironmentUsage {

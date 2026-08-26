@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`impact`.** Answers which entry points reach a symbol, and which of them
+  depend on it for their access level. Two counts, because they are two claims:
+  a date formatter reached by forty routes guards none of them. Derived by
+  inverting reachability the scanner already recorded — one scan, no rescans,
+  ~1ms on a real repository. `EntryPoint.reachable` was added to carry the call
+  site and depth alongside the name, because `reachableCalls` held names only
+  and could not tell two modules' `requireUser` apart.
 - **`blame`.** Finds the commit where a route stopped being what it was. Walks
   first-parent history backwards, scanning each tree with the same scanner used
   everywhere else, and stops at the first posture that differs. Deliberately

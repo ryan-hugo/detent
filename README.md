@@ -36,6 +36,7 @@ detent snapshot [project] [--out PATH]
 detent diff     [project] [--base REF | --baseline PATH] [--json] [--html PATH] [--markdown]
 detent contract [project] [--contract PATH] [--json] [--html PATH] [--markdown]
 detent explain  [project] --route ROUTE [--json]
+detent impact   [project] --symbol NAME|FILE#NAME [--json]
 detent triage   [project] --sarif PATH [--json]
 detent init     [project] [--force]
 detent graph    [project] [--html PATH]
@@ -158,6 +159,39 @@ This is not `git blame`. It does not ask who edited a line — it scans historic
 A route that did not exist is reported as `absent`, never as `public` — those are different states, and confusing them would flag every newly added route as having been exposed.
 
 `--max-commits N` (default 40) and `--since "30 days ago"` bound the search. The walk stops at the first difference, so a recent change costs a few scans rather than the whole limit. When the limit is reached or the clone is shallow, the output says history is incomplete rather than claiming the route never changed.
+
+## Asking who depends on it
+
+Before you touch a shared helper, `impact` tells you what reaches it:
+
+```bash
+detent impact --symbol getServerSession
+```
+
+```
+Symbol: getServerSession
+
+  Reached by: 6 entry points
+  Security evidence for: 6
+
+  Access: authenticated 6
+
+  /api/posts
+    authenticated  direct  security evidence
+  /api/users/[userId]
+    authenticated  direct  security evidence
+```
+
+Two counts, because they are two different claims:
+
+- **reached by** — the resolver walked from the entry point to this symbol.
+- **security evidence for** — this symbol is one the classifier actually used to decide that entry point's access level.
+
+A date formatter reached by forty routes guards none of them; a guard reached by forty routes guards all of them. Detent reports both numbers rather than calling everything "affected", because only one of them is about security.
+
+It says what depends on the symbol now. It does not predict what removing it would do — that would be a claim the model cannot support.
+
+Use `file#name` when the same name is called from several places and you want one of them.
 
 ## Seeing what reaches what
 

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { loadConfig, rel, walk } from "../shared.js";
+import { loadConfig, qualifyReachable, rel, walk } from "../shared.js";
 import { classifyAuth, classifySensitive } from "../../core/classify.js";
 import { inferAccess } from "../../core/access.js";
 import { deriveFindings } from "../../core/findings.js";
@@ -135,6 +135,9 @@ export function scanSvelteKitProject(projectRoot: string): ApplicationSecurityMo
         inferredAccess: inferAccess(authSignals),
         sensitiveOperations,
         reachableCalls: [...new Set(reachable.map((call) => call.name))],
+        // Qualified by defining file, so two modules exporting the same name
+        // stay distinct. Deduplicated on that identity, not on name alone.
+        reachable: qualifyReachable(reachable),
       };
 
       if (isMethod) {

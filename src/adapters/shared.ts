@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_FILENAME, ConfigError, EMPTY_CONFIG, parseConfig } from "../core/config.js";
 import type { DetentConfig } from "../core/config.js";
+import type { ReachableCall } from "../core/model.js";
+import type { ResolvedCall } from "./resolve.js";
 
 /**
  * Filesystem and configuration plumbing shared by every adapter.
@@ -35,6 +37,28 @@ export function walk(root: string, depth = 0): string[] {
     }
   }
   return out;
+}
+
+/**
+ * Reachable calls keyed by defining file plus name, so two modules that each
+ * export `requireUser` stay separate entities.
+ *
+ * When the same symbol is reached by more than one path, the shallowest wins:
+ * it is the most direct route to it, and keeping every path would multiply
+ * output without adding information. Sorted for a stable model.
+ */
+export function qualifyReachable(calls: ResolvedCall[]): ReachableCall[] {
+  const byIdentity = new Map<string, ReachableCall>();
+  for (const call of calls) {
+    const callSite = call.definedIn ?? "";
+    const key = `${callSite}#${call.name}`;
+    const existing = byIdentity.get(key);
+    if (existing && existing.depth <= call.depth) continue;
+    byIdentity.set(key, { name: call.name, callSite, depth: call.depth, via: call.via });
+  }
+  return [...byIdentity.values()].sort(
+    (a, b) => a.callSite.localeCompare(b.callSite) || a.name.localeCompare(b.name),
+  );
 }
 
 /** Project-relative path with forward slashes, so model output is platform-stable. */

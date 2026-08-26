@@ -4,6 +4,7 @@ import type { Breach } from "../core/contract.js";
 import type { EnrichedFinding } from "../core/enrich.js";
 import type { EvidenceStep, Explanation } from "../core/explain.js";
 import type { BlameResult } from "../core/blame.js";
+import type { ImpactResult } from "../core/impact.js";
 
 export function renderModel(model: ApplicationSecurityModel): string {
   const lines: string[] = [];
@@ -179,6 +180,41 @@ export function renderBlame(result: BlameResult): string {
   if (result.historyIncomplete) {
     lines.push("");
     lines.push("  History is incomplete; earlier changes may exist beyond what was examined.");
+  }
+  return lines.join("\n");
+}
+
+export function renderImpact(result: ImpactResult): string {
+  const lines = [`Symbol: ${result.symbol.name}`, ""];
+
+  if (result.reachableCount === 0) {
+    lines.push("  No entry point reaches this symbol.");
+    return lines.join("\n");
+  }
+
+  lines.push(`  Reached by: ${result.reachableCount} ${result.reachableCount === 1 ? "entry point" : "entry points"}`);
+  // Reaching a guard and being guarded by it are different claims, and the
+  // model can tell them apart, so they are reported separately.
+  lines.push(`  Security evidence for: ${result.securityEvidenceCount}`);
+
+  const distribution = Object.entries(result.accessDistribution)
+    .filter(([, count]) => count > 0)
+    .map(([level, count]) => `${level} ${count}`)
+    .join("   ");
+  if (distribution) {
+    lines.push("");
+    lines.push(`  Access: ${distribution}`);
+  }
+
+  lines.push("");
+  for (const item of result.entryPoints) {
+    lines.push(`  ${item.subject}`);
+    const flags: string[] = [item.access, item.relationship];
+    if (item.securityEvidence) flags.push("security evidence");
+    lines.push(`    ${flags.join("  ")}`);
+    if (item.via.length > 0) {
+      lines.push(`    via ${[...item.via, result.symbol.name].join(" -> ")}`);
+    }
   }
   return lines.join("\n");
 }

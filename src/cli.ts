@@ -10,8 +10,10 @@ import { suggestVocabulary } from "./core/vocabulary.js";
 import { EnrichError, enrichFindings, parseSarif } from "./core/enrich.js";
 import { ExplainError, explain, findEntryPoints, knownSubjects } from "./core/explain.js";
 import { blame } from "./core/blame.js";
+import { findSymbols, impact } from "./core/impact.js";
+import type { SymbolRef } from "./core/impact.js";
 import type { ApplicationSecurityModel } from "./core/model.js";
-import { renderBlame, renderBreaches, renderDiff, renderExplanations, renderModel, renderTriage } from "./reporters/text.js";
+import { renderBlame, renderBreaches, renderDiff, renderExplanations, renderImpact, renderModel, renderTriage } from "./reporters/text.js";
 import { renderContractHtml, renderDiffHtml, renderGraphHtml, renderModelHtml } from "./reporters/html.js";
 import { renderContractMarkdown, renderDiffMarkdown } from "./reporters/markdown.js";
 
@@ -28,6 +30,7 @@ function usage(): never {
       "  contract  [project] [--contract PATH] [--json] [--html PATH] [--markdown]",
       "  explain   [project] --route ROUTE [--json]",
       "  blame     [project] --route ROUTE [--max-commits N] [--since WHEN] [--json]",
+      "  impact    [project] --symbol NAME|FILE#NAME [--json]",
       "  triage    [project] --sarif PATH [--json]",
       "  graph     [project] [--html PATH]",
       "  version",
@@ -254,6 +257,26 @@ try {
     });
 
     console.log(args.includes("--json") ? JSON.stringify(result, null, 2) : renderBlame(result));
+  } else if (command === "impact") {
+    const target = option(args, "--symbol");
+    if (!target) {
+      console.error(
+        `impact needs a symbol: detent impact [project] --symbol withWorkspace\n` +
+          `Use file#name to pick one exactly, e.g. lib/guard.ts#requireUser.`,
+      );
+      process.exit(2);
+    }
+
+    const model = scan(root);
+    const matches = findSymbols(model, target);
+
+    if (matches.length === 0) {
+      // A symbol nothing reaches still exists; one the model never saw does not.
+      console.error(`No symbol reachable from any entry point matches ${JSON.stringify(target)}`);
+      process.exit(2);
+    }
+    const result = impact(model, matches[0] as SymbolRef);
+    console.log(args.includes("--json") ? JSON.stringify(result, null, 2) : renderImpact(result));
   } else if (command === "graph") {
     const model = scan(root);
     const out = option(args, "--html") ?? path.join(root, ".detent", "graph.html");
