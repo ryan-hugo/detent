@@ -56,11 +56,23 @@ const cases = [
     expectedEntryPoints: 1,
   },
   {
+    // A route guarded only by middleware is protected, and the route the
+    // matcher does not name is not. Both halves matter: crediting every route
+    // would be worse than the gap this closes.
+    name: 'next-middleware',
+    project: path.join(root, 'test/fixtures/next-middleware'),
+    expectedRules: [],
+    expectedEntryPoints: 2,
+  },
+  {
     // Second adapter: the same model, a different framework's conventions.
     name: 'sveltekit-basic',
     project: path.join(root, 'test/fixtures/sveltekit-basic'),
     scan: scanSvelteKitProject,
-    expectedRules: ['AUTH001', 'ENV001'],
+    // AUTH002 fires on the fixture's unguarded /admin route. It was always
+    // produced; the expectation simply did not list it until unexpected rules
+    // started counting as failures.
+    expectedRules: ['AUTH001', 'AUTH002', 'ENV001'],
     expectedEntryPoints: 4,
   },
 ];
@@ -75,9 +87,17 @@ for (const item of cases) {
   const model = (item.scan ?? scanNextProject)(item.project);
   const rules = new Set(model.findings.map((finding) => finding.ruleId));
   const missing = item.expectedRules.filter((rule) => !rules.has(rule));
-  const pass = missing.length === 0 && model.entryPoints.length === item.expectedEntryPoints;
+  // Unexpected rules count as failures too. Without this, a fixture that
+  // expects no findings passes no matter how many it produces, which is
+  // exactly the case that has to stay honest for a false-positive fix.
+  const unexpected = [...rules].filter((rule) => !item.expectedRules.includes(rule));
+  const pass =
+    missing.length === 0 &&
+    unexpected.length === 0 &&
+    model.entryPoints.length === item.expectedEntryPoints;
   console.log(`${pass ? 'PASS' : 'FAIL'} ${item.name} — entryPoints=${model.entryPoints.length}, findings=${model.findings.length}`);
   if (missing.length) console.log(`  missing rules: ${missing.join(', ')}`);
+  if (unexpected.length) console.log(`  unexpected rules: ${unexpected.join(', ')}`);
   if (!pass) failures += 1;
 }
 

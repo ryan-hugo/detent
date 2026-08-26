@@ -3,6 +3,7 @@ import path from "node:path";
 import { loadConfig, qualifyReachable, rel, walk } from "../shared.js";
 import { classifyAuth, classifySensitive } from "../../core/classify.js";
 import { inferAccess } from "../../core/access.js";
+import { barrierApplies } from "../../core/middleware.js";
 import { deriveFindings } from "../../core/findings.js";
 import { extractModule } from "../extract.js";
 import { createLoader, resolveCalls } from "../resolve.js";
@@ -12,10 +13,37 @@ import type {
   ClientBoundary,
   EntryPoint,
   EnvironmentUsage,
+  MiddlewareBarrier,
   SensitiveOperation,
 } from "../../core/model.js";
 
 const METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]);
+
+/**
+ * Files Next.js treats as request-level middleware.
+ *
+ * `middleware` was renamed to `proxy` in v16 with the same semantics and the
+ * same `config.matcher`. Both are recognized: a tool that only knew the old
+ * name would silently stop seeing the barrier after a codemod, which is exactly
+ * the kind of silent under-reporting this feature exists to remove.
+ *
+ * Next.js requires the file at the project root, or in `src/` — not nested
+ * inside `app/`, where it would be an ordinary module of the same name.
+ */
+const MIDDLEWARE_FILES = new Set([
+  "middleware.ts",
+  "middleware.js",
+  "middleware.tsx",
+  "proxy.ts",
+  "proxy.js",
+  "proxy.tsx",
+  "src/middleware.ts",
+  "src/middleware.js",
+  "src/middleware.tsx",
+  "src/proxy.ts",
+  "src/proxy.js",
+  "src/proxy.tsx",
+]);
 
 function routeFromFile(root: string, file: string): string | undefined {
   const normalized = rel(root, file);
@@ -39,6 +67,7 @@ export function scanNextProject(projectRoot: string): ApplicationSecurityModel {
   const clientBoundaries: ClientBoundary[] = [];
   const environment: EnvironmentUsage[] = [];
   const unparsedFiles: string[] = [];
+  const barriers: MiddlewareBarrier[] = [];
 
   for (const file of files) {
     const text = fs.readFileSync(file, "utf8");
@@ -60,6 +89,49 @@ export function scanNextProject(projectRoot: string): ApplicationSecurityModel {
 
     if (isClient) {
       clientBoundaries.push({ file: relative, exportedNames: module.functions.map((fn) => fn.name) });
+    }
+
+    // Middleware guards by path match rather than by being called, so it is
+    // read once as an application-level barrier and never as an entry point.
+    if (MIDDLEWARE_FILES.has(relative)) {
+      const middlewareFn =
+        module.functions.find((fn) => fn.name === "middleware" || fn.name === "proxy") ??
+        module.functions.find((fn) => fn.name === "default") ??
+        module.functions[0];
+
+      if (middlewareFn) {
+        const guards: AuthSignal[] = [];
+        for (const call of resolveCalls(root, file, module, middlewareFn.calls, loader)) {
+          const access = classifyAuth(call.name, config);
+          if (!access) continue;
+          guards.push({
+            name: call.name,
+            access,
+            location: { file: relative, line: call.line },
+            ...(call.via.length > 0 ? { via: call.via } : {}),
+            source: "middleware",
+          });
+        }
+
+        const routeConfig = module.routeConfig;
+        // A middleware with no guard inside it protects nothing, and recording
+        // it would let a later stage treat an empty barrier as evidence.
+        if (guards.length > 0) {
+          barriers.push({
+            file: relative,
+            access: inferAccess(guards),
+            guards,
+            matchers: routeConfig?.matchers ?? [],
+            // No `config` export at all means Next.js runs it on every request.
+            appliesToAll: !routeConfig || routeConfig.matchers.length === 0,
+            conditional: Boolean(
+              routeConfig?.hasDynamicMatcher || routeConfig?.hasRequestConditions,
+            ),
+            location: { file: relative, line: middlewareFn.line },
+          });
+        }
+      }
+      continue;
     }
 
     const isRoute = /\/route\.tsx?$/.test(file.split(path.sep).join("/"));
@@ -124,12 +196,31 @@ export function scanNextProject(projectRoot: string): ApplicationSecurityModel {
     }
   }
 
+  // Applied after the walk, because middleware may be read before or after the
+  // routes it covers and the answer must not depend on filesystem order.
+  //
+  // Only route handlers are covered. Next.js documents that Server Functions
+  // are not separate routes — they are POST requests to whatever route they are
+  // used on — and warns that a matcher change or a refactor can silently remove
+  // that coverage, recommending authorization inside each one. Crediting an
+  // action with middleware protection would therefore assert something the
+  // framework itself tells you not to rely on.
+  for (const entry of entryPoints) {
+    if (entry.kind !== "route-handler" || !entry.route) continue;
+    for (const barrier of barriers) {
+      if (!barrierApplies(barrier, entry.route)) continue;
+      entry.authSignals.push(...barrier.guards);
+    }
+    entry.inferredAccess = inferAccess(entry.authSignals);
+  }
+
   const base = {
     schemaVersion: 1 as const,
     generatedAt: new Date().toISOString(),
     root,
     framework: { name: "nextjs" as const, confidence: files.some((file) => file.includes(`${path.sep}app${path.sep}`)) ? 0.95 : 0.5 },
     entryPoints: entryPoints.sort((a, b) => a.id.localeCompare(b.id)),
+    barriers: barriers.sort((a, b) => a.file.localeCompare(b.file)),
     unparsedFiles: unparsedFiles.sort(),
     clientBoundaries: clientBoundaries.sort((a, b) => a.file.localeCompare(b.file)),
     environment: environment.sort((a, b) => `${a.location.file}:${a.location.line}`.localeCompare(`${b.location.file}:${b.location.line}`)),

@@ -39,9 +39,15 @@ export function deriveFindings(model: Omit<ApplicationSecurityModel, "findings">
     // A guard that runs after the operation it is supposed to protect is not a
     // barrier. Position is real evidence, not a heuristic: every authorization
     // signal sits below every sensitive operation in the same function body.
-    if (entry.authSignals.length > 0 && entry.sensitiveOperations.length > 0) {
+    //
+    // Middleware signals are excluded: they run before the handler is entered,
+    // by definition, and their line number refers to a different file. Comparing
+    // the two positions would compare unrelated coordinates and report a guard
+    // that genuinely runs first as if it ran last.
+    const positionalSignals = entry.authSignals.filter((signal) => signal.source !== "middleware");
+    if (positionalSignals.length > 0 && entry.sensitiveOperations.length > 0) {
       const firstSensitive = Math.min(...entry.sensitiveOperations.map((op) => op.location.line));
-      const earliestGuard = Math.min(...entry.authSignals.map((signal) => signal.location.line));
+      const earliestGuard = Math.min(...positionalSignals.map((signal) => signal.location.line));
       if (earliestGuard > firstSensitive) {
         const ruleId = "AUTH003";
         findings.push({

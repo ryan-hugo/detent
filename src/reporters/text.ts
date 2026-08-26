@@ -109,6 +109,12 @@ export function renderExplanations(explanations: Explanation[]): string {
           lines.push(`${indent}${arrow}${name}()`);
         });
         lines.push(`      establishes: ${step.access} (${step.location.file}:${step.location.line})`);
+        // The guard is in another file and the handler shows no sign of it, so
+        // say where the protection comes from rather than leaving the reader
+        // hunting for a barrier that is not in the route.
+        if (step.source === "middleware") {
+          lines.push("      via middleware matching this route, not a call in the handler");
+        }
       }
     }
 

@@ -32,10 +32,30 @@ export interface ImportBinding {
   line: number;
 }
 
+/**
+ * `export const config = { matcher: … }` as written in a middleware file.
+ *
+ * Next.js requires these to be static constants so it can read them at build
+ * time; a value built from a variable is ignored by the framework itself. This
+ * mirrors that rule — only literals are collected, and anything dynamic is
+ * reported through `hasDynamicMatcher` rather than guessed at.
+ */
+export interface ExtractedRouteConfig {
+  /** Literal `matcher` sources, whether given as a string or an array. */
+  matchers: string[];
+  /** True when a `matcher` entry was present but not a static literal. */
+  hasDynamicMatcher: boolean;
+  /** True when any matcher object carries `has`/`missing` request conditions. */
+  hasRequestConditions: boolean;
+  line: number;
+}
+
 export interface ExtractedModule {
   /** Directives that apply to the whole module (top of file only). */
   moduleDirectives: string[];
   functions: ExtractedFunction[];
+  /** `export const config = {…}`, when the module declares one. */
+  routeConfig?: ExtractedRouteConfig;
   /** `process.env.X` reads anywhere in the file. */
   envReads: { name: string; line: number }[];
   /** Every function declared here, exported or not, so calls can be resolved. */
@@ -118,6 +138,67 @@ function collectCalls(source: ts.SourceFile, body: ts.Node): ExtractedCall[] {
   return calls;
 }
 
+/**
+ * Reads `matcher` out of an exported `config` object.
+ *
+ * Only literals count. Next.js states that matcher values "need to be constants
+ * so they can be statically analyzed at build-time" and ignores dynamic ones, so
+ * a variable here is recorded as dynamic rather than resolved — inventing its
+ * value would be inventing a barrier.
+ */
+function readRouteConfig(initializer: ts.Expression, line: number): ExtractedRouteConfig {
+  const config: ExtractedRouteConfig = {
+    matchers: [],
+    hasDynamicMatcher: false,
+    hasRequestConditions: false,
+    line,
+  };
+  if (!ts.isObjectLiteralExpression(initializer)) {
+    config.hasDynamicMatcher = true;
+    return config;
+  }
+
+  const property = initializer.properties.find(
+    (item): item is ts.PropertyAssignment =>
+      ts.isPropertyAssignment(item) &&
+      (ts.isIdentifier(item.name) || ts.isStringLiteral(item.name)) &&
+      item.name.text === "matcher",
+  );
+  if (!property) return config;
+
+  // One matcher may be a bare string; several arrive as an array. Each element
+  // is either a string or an object carrying `source` plus optional conditions.
+  const entries = ts.isArrayLiteralExpression(property.initializer)
+    ? [...property.initializer.elements]
+    : [property.initializer];
+
+  for (const entry of entries) {
+    if (ts.isStringLiteralLike(entry)) {
+      config.matchers.push(entry.text);
+      continue;
+    }
+    if (ts.isObjectLiteralExpression(entry)) {
+      for (const item of entry.properties) {
+        if (!ts.isPropertyAssignment(item)) continue;
+        const key = ts.isIdentifier(item.name) || ts.isStringLiteral(item.name) ? item.name.text : undefined;
+        if (key === "source" && ts.isStringLiteralLike(item.initializer)) {
+          config.matchers.push(item.initializer.text);
+        } else if (key === "source") {
+          config.hasDynamicMatcher = true;
+        } else if (key === "has" || key === "missing") {
+          // Applicability now depends on a header, cookie or query value that
+          // does not exist at analysis time. Recorded so the barrier can be
+          // treated as conditional instead of proven.
+          config.hasRequestConditions = true;
+        }
+      }
+      continue;
+    }
+    config.hasDynamicMatcher = true;
+  }
+  return config;
+}
+
 function inlineServerDirective(fn: ts.FunctionLikeDeclaration): boolean {
   const body = fn.body;
   if (!body || !ts.isBlock(body)) return false;
@@ -151,6 +232,7 @@ export function extractModule(fileName: string, text: string): ExtractedModule {
   const envReads: { name: string; line: number }[] = [];
   const localFunctions = new Map<string, ExtractedFunction>();
   const imports: ImportBinding[] = [];
+  let routeConfig: ExtractedRouteConfig | undefined;
 
   // Imports and local declarations first: resolving a guard means knowing both
   // what this file defines and where a name came from.
@@ -186,7 +268,55 @@ export function extractModule(fileName: string, text: string): ExtractedModule {
   }
 
   for (const statement of source.statements) {
+    // `export default handler` — a binding exported by reference. Resolved
+    // against what the module already declared, so a middleware written this
+    // way is still found. Named `default`, which is what a caller looks for.
+    if (ts.isExportAssignment(statement) && !statement.isExportEquals) {
+      if (ts.isIdentifier(statement.expression)) {
+        const target = localFunctions.get(statement.expression.text);
+        if (target) functions.push({ ...target, name: "default" });
+        continue;
+      }
+      const inline = functionOf(statement.expression);
+      if (inline) {
+        functions.push(describe(source, "default", inline, statement));
+        continue;
+      }
+
+      // `export default withAuth(async function middleware(req) {…})` — the
+      // shape next-auth documents, and what shadcn-ui/taxonomy actually ships.
+      // Same treatment as a wrapped route handler: the wrapper counts as a call
+      // so it can act as evidence, and the inner body is still scanned.
+      if (ts.isCallExpression(statement.expression)) {
+        const wrapper = calleeName(statement.expression.expression);
+        const inner = statement.expression.arguments.map(functionOf).find(Boolean);
+        const calls: ExtractedCall[] = [];
+        if (wrapper) calls.push({ name: wrapper, line: lineOf(source, statement) });
+        if (inner?.body) calls.push(...collectCalls(source, inner.body));
+        functions.push({
+          name: "default",
+          line: lineOf(source, statement),
+          isInlineServerAction: inner ? inlineServerDirective(inner) : false,
+          calls,
+        });
+      }
+      continue;
+    }
+
     if (!hasExportModifier(statement)) continue;
+
+    // `export default async function (request) {…}` — legal and anonymous, so
+    // there is no name to key it by. Next.js accepts it for middleware, and
+    // skipping it would silently drop a real barrier.
+    if (ts.isFunctionDeclaration(statement) && !statement.name) {
+      const isDefault = (ts.getModifiers?.(statement) ?? []).some(
+        (modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword,
+      );
+      if (isDefault) {
+        functions.push(describe(source, "default", statement, statement));
+        continue;
+      }
+    }
 
     if (ts.isFunctionDeclaration(statement) && statement.name) {
       functions.push(describe(source, statement.name.text, statement, statement));
@@ -196,6 +326,14 @@ export function extractModule(fileName: string, text: string): ExtractedModule {
     if (ts.isVariableStatement(statement)) {
       for (const declaration of statement.declarationList.declarations) {
         if (!ts.isIdentifier(declaration.name) || !declaration.initializer) continue;
+
+        // `export const config = { matcher: … }` is configuration, not a
+        // handler, and must be read before the object-of-handlers branch below
+        // would treat its properties as entry points.
+        if (declaration.name.text === "config") {
+          routeConfig = readRouteConfig(declaration.initializer, lineOf(source, declaration));
+          continue;
+        }
 
         const direct = functionOf(declaration.initializer);
         if (direct) {
@@ -270,6 +408,7 @@ export function extractModule(fileName: string, text: string): ExtractedModule {
       ((source as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics ?? []).length > 0,
     moduleDirectives: directivesOf(source.statements),
     functions,
+    ...(routeConfig ? { routeConfig } : {}),
     envReads,
     localFunctions,
     imports,

@@ -128,6 +128,48 @@ An entry point with no guard says so rather than showing an empty section. A rou
 
 `--json` gives the same content for scripts and agents.
 
+## Guards that are not in the handler
+
+A route protected by middleware has nothing in its own body to show for it:
+
+```ts
+// middleware.ts
+export async function middleware(request) {
+  await requireAdmin();
+}
+export const config = { matcher: ["/api/admin/:path*"] };
+```
+
+Detent reads the matcher and applies the barrier to the routes it names, so
+`/api/admin/users` is `admin` even though its handler contains no guard. `explain`
+says where the protection comes from:
+
+```
+  Access: admin
+  Evidence:
+    requireAdmin()
+      establishes: admin (middleware.ts:4)
+      via middleware matching this route, not a call in the handler
+```
+
+The matcher is read the way Next.js reads it, not as a glob. That distinction is
+the whole feature: `/((?!api|_next/static).*)` **excludes** `/api`, and a tool
+that treated it as a glob would report those routes as protected when they are
+precisely the ones the matcher exempts.
+
+What cannot be proven grants nothing. A matcher built from a variable (which
+Next.js itself ignores), one gated on `has`/`missing` request conditions, and a
+middleware with no guard in its body are all recorded without raising any route's
+access level. Server Actions are never credited either — Next.js documents that
+they are POSTs to whatever route they are used on, and that a matcher change can
+silently remove that coverage.
+
+This also makes a whole class of regression visible. Narrowing a matcher touches
+no route file at all, so nothing in a diff points at the route that lost its
+guard — but `review` reports it as `admin -> public`, and `blame` names the commit.
+
+`proxy.ts` works too: Next.js 16 renamed the convention, and both names are read.
+
 ## Asking when it changed
 
 `explain` says why a route is classified as it is. `blame` says when that stopped being something else:

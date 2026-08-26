@@ -35,10 +35,16 @@ Done:
 - ~~Add negative fixtures for strings/comments that resemble calls.~~
 - ~~Discover wrapped handlers such as `export const DELETE = withAdmin(...)`.~~
 
+Done (continued):
+
+- ~~Model `middleware.ts` and its matcher, so a route guarded by middleware stops
+  reading as `public`.~~ Closed 2026-08-26; see "Gap 4 closed" below.
+
 Outstanding:
 
 - Support re-exported Route Handlers conservatively (`export { handler as GET }`).
-- Model `middleware.ts` and its matcher, so a route guarded by middleware stops reading as `public` (gap 4 below).
+  The same gap applies to `export { auth as middleware } from "auth"`, the
+  next-auth v5 shape: it is recorded as no barrier rather than an assumed one.
 
 #### Measured gaps (2026-08-25)
 
@@ -50,7 +56,7 @@ Each one is a wrong answer, not a missing feature.
 | 1 | `requireAdmin()` inside a string literal; `auth()` inside a comment | ~~`admin`~~ **fixed** | `public` |
 | 2 | `'use server'` in one function body, module has no directive | ~~every export~~ **fixed** | only that function |
 | 3 | `export const DELETE = withAdmin(async () => {…})` | ~~not discovered~~ **fixed** | route handler, guard `withAdmin` |
-| 4 | `middleware.ts` matching `/api/:path*` | not modelled | guard applied to matched routes |
+| 4 | `middleware.ts` matching `/api/:path*` | ~~not modelled~~ **fixed** | guard applied to matched routes |
 | 5 | `export const POST = (async () => {…},)` | ~~not discovered~~ **fixed** | route handler, no guard |
 
 Gap 1 was the dangerous one: it invented an authorization barrier out of dead text,
@@ -61,7 +67,58 @@ middleware reads as `public`.
 
 Gaps 1, 2 and 3 were closed by P0.1. They are locked by `test/parser-gaps.test.mjs`
 and by the `next-dead-text`, `next-inline-action` and `next-wrapped-handler` eval
-fixtures. Gap 4 remains: it needs a new entity in the model, not a better parser.
+fixtures. Gap 4 needed a new entity in the model rather than a better parser, and
+is covered below.
+
+#### Gap 4 closed (2026-08-26)
+
+A route guarded only by middleware read as `public` and produced two HIGH
+findings that were both wrong. `MiddlewareBarrier` is now a first-class entity in
+the model: a barrier that guards by path match rather than by being called.
+
+What the implementation is careful about, and why:
+
+- **Matchers are path-to-regexp, not globs.** `/((?!api|_next/static).*)` — the
+  shape nearly every real project uses — *excludes* `/api`. Glob matching would
+  have concluded the opposite and claimed protection for exactly the routes the
+  matcher exempts. All the documented rules are implemented and tested: `:path`
+  is one segment, `*` is zero-or-more, `+` is one-or-more, parenthesised groups
+  are real regular expressions, and patterns are anchored.
+- **`proxy.ts` as well as `middleware.ts`.** Next.js 16 renamed the convention.
+  Recognising only the old name would silently lose the barrier after a codemod.
+- **Server Actions are never credited.** Next.js documents that Server Functions
+  are POSTs to the route they are used on, and warns that a matcher change can
+  silently remove that coverage. Crediting them would assert what the framework
+  itself says not to rely on.
+- **Unprovable barriers grant nothing.** A dynamic matcher (which Next.js itself
+  ignores), a matcher gated on `has`/`missing` request conditions, and a
+  middleware whose body contains no guard are all recorded without raising any
+  route's access level.
+- **AUTH003 excludes middleware signals.** That rule compares line numbers, but
+  middleware runs before the handler is entered and its line refers to another
+  file. Left unfixed it reported a guard that genuinely runs first as running
+  last — a false positive introduced by the fix itself, caught by testing it.
+
+Two defects were found by attacking the feature rather than exercising it:
+
+1. **A catastrophically backtracking matcher hung the scan.** A matcher is
+   untrusted input — it comes from the repository being scanned — and
+   `/((a+)+)$` compiles to a regex that never returns on a 30-character string.
+   That is a denial of service against the machine running the analysis.
+   Nested quantifiers are now refused before compilation.
+2. **The real-world shape was not detected at all.** shadcn-ui/taxonomy ships
+   `export default withAuth(async function middleware(req) {…})`, and the first
+   implementation found no barrier in it. Wrapped and anonymous default exports
+   are now extracted, which also fixed `export default handler`.
+
+Measured on real repositories: taxonomy detects `withAuth` over its four
+documented matcher paths and correctly credits none of its `/api/*` routes,
+which the matcher does not cover. Findings stayed at 0 on both taxonomy and
+next-auth-example — the fix removes false positives without adding any.
+
+Locked by `test/middleware.test.mjs` (31 tests) and the `next-middleware` eval
+fixture, which asserts both halves: the matched route is protected, and the
+route the matcher does not name is not.
 
 ### P0.2 — configurable auth vocabulary — done
 
@@ -144,8 +201,8 @@ rather than inferred from absence.
 Still a static, self-contained page: no hosted UI, no network, no script tags.
 
 Outstanding: paths are per-entry-point and do not yet chain through shared
-helpers, so a guard applied one call deep is not drawn. Middleware is not drawn
-either — that is gap 4 in P0.1.
+helpers, so a guard applied one call deep is not drawn. Middleware now raises a
+matched route’s access level, but the barrier itself is not drawn as a node yet.
 
 ### Go criterion met (2026-08-26)
 

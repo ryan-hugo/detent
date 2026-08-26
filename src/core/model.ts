@@ -15,6 +15,15 @@ export interface AuthSignal {
   access: AccessLevel;
   location: SourceLocation;
   /**
+   * Set when the signal comes from middleware matching this route rather than
+   * from a call inside the handler.
+   *
+   * Kept distinct because the two are not equally strong: a guard in the body
+   * runs for every caller, while middleware protection depends on a matcher
+   * that a later edit can narrow without touching the route at all.
+   */
+  source?: "middleware";
+  /**
    * Function names traversed from the entry point to reach this call, empty
    * when the call is written in the handler itself.
    *
@@ -78,6 +87,41 @@ export interface EntryPoint {
   reachable?: ReachableCall[];
 }
 
+/**
+ * A request-level authorization barrier declared outside any entry point.
+ *
+ * Next.js middleware is the case this exists for: it guards by path match
+ * rather than by being called, so the evidence lives in a different file from
+ * the route it protects.
+ */
+export interface MiddlewareBarrier {
+  /** Project-relative file the barrier is declared in. */
+  file: string;
+  /** Access level the guards inside its body establish. */
+  access: AccessLevel;
+  /** Guard calls found in the barrier body, as evidence. */
+  guards: AuthSignal[];
+  /** `config.matcher` sources exactly as written. */
+  matchers: string[];
+  /**
+   * True when no `config.matcher` is exported.
+   *
+   * Next.js then runs the middleware on every request. This is a different
+   * state from a matcher that happens to match everything, and worth keeping
+   * distinct in output.
+   */
+  appliesToAll: boolean;
+  /**
+   * True when applicability cannot be decided from source — a dynamic matcher,
+   * or one gated on `has`/`missing` request conditions.
+   *
+   * A conditional barrier is recorded but never raises a route's access level:
+   * a guard we cannot prove applies is not evidence that it does.
+   */
+  conditional: boolean;
+  location: SourceLocation;
+}
+
 export interface EnvironmentUsage {
   name: string;
   clientVisible: boolean;
@@ -109,6 +153,14 @@ export interface ApplicationSecurityModel {
     confidence: number;
   };
   entryPoints: EntryPoint[];
+  /**
+   * Request-level barriers declared outside any entry point.
+   *
+   * Next.js middleware (`proxy.ts` since v16) guards routes by path rather than
+   * by being called from them, so it is a property of the application, not of
+   * one handler. Recorded here and applied to the entry points it matches.
+   */
+  barriers?: MiddlewareBarrier[];
   /**
    * Files that did not parse cleanly, sorted.
    *

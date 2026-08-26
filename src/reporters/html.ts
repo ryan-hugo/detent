@@ -158,6 +158,9 @@ tr:last-child td{border-bottom:0}
 .acc.public{color:var(--exposed)}
 .none{color:var(--exposed);font-style:italic}
 .nil{color:var(--inert)}
+/* Marks a guard that sits in middleware rather than in the handler body. */
+.via{font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);
+  border:1px solid var(--rule);border-radius:2px;padding:1px 3px;margin-left:4px;vertical-align:1px}
 
 /* ---- transitions: the diff's reason for existing ---- */
 .tr-row{padding:22px 0;border-bottom:1px solid var(--rule)}
@@ -271,7 +274,16 @@ function renderRow(entry: EntryPoint): string {
   const verb = entry.method ?? (entry.kind === "server-action" ? "action" : entry.kind);
   const guards =
     entry.authSignals.length > 0
-      ? entry.authSignals.map((signal) => escapeHtml(`${signal.name}()`)).join(" ")
+      ? entry.authSignals
+          .map((signal) =>
+            // A middleware guard is in another file and invisible in the
+            // handler. Rendering it like an inline call would tell a reviewer
+            // to look somewhere the barrier is not.
+            signal.source === "middleware"
+              ? `${escapeHtml(`${signal.name}()`)}<span class="via">middleware</span>`
+              : escapeHtml(`${signal.name}()`),
+          )
+          .join(" ")
       : `<span class="none">none detected</span>`;
   const ops =
     entry.sensitiveOperations.length > 0

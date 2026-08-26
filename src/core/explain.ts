@@ -18,6 +18,14 @@ export interface EvidenceStep {
   /** Functions walked from the handler to reach it; empty when written inline. */
   via: string[];
   location: SourceLocation;
+  /**
+   * Set when the evidence came from middleware matching this route.
+   *
+   * Worth stating explicitly: the guard is in another file and nothing in the
+   * handler shows it, so a reader who is not told will look for a barrier that
+   * is not there.
+   */
+  source?: "middleware";
 }
 
 export interface Explanation {
@@ -81,6 +89,7 @@ export function explainEntryPoint(entry: EntryPoint): Explanation {
       access: signal.access,
       via: signal.via ?? [],
       location: signal.location,
+      ...(signal.source ? { source: signal.source } : {}),
     }))
     // Strongest evidence first: it is the one that decided `inferredAccess`.
     // Ties break on chain length, so a guard in the handler reads before one

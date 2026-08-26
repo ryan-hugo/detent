@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Middleware as a security barrier.** A route guarded only by `middleware.ts`
+  (or `proxy.ts`, which Next.js 16 renamed it to) no longer reads as `public`.
+  `config.matcher` is interpreted with the path-to-regexp semantics Next.js
+  documents rather than as a glob — which matters most for the negative
+  lookaheads real projects use, since `/((?!api).*)` *excludes* `/api` and glob
+  matching would have claimed the opposite. What cannot be proven grants
+  nothing: a dynamic matcher, one gated on `has`/`missing` request conditions,
+  and a middleware with no guard in its body are all recorded without raising
+  any route's access level. Server Actions are never credited, because Next.js
+  documents that a matcher change can silently remove their coverage.
+  Middleware-sourced evidence is labelled as such in `explain` and the HTML
+  report, since the guard is in a file the handler never mentions.
+
 - **`review`.** Compares the working tree against HEAD and reports what the
   change did to the security model: regressions, improvements, new surface,
   removed surface, and evidence that changed without moving a posture. Composes
