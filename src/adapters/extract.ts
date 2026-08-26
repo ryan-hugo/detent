@@ -42,6 +42,15 @@ export interface ExtractedModule {
   localFunctions: Map<string, ExtractedFunction>;
   /** Imported names, so a call can be traced to the file that defines it. */
   imports: ImportBinding[];
+  /**
+   * True when the file did not parse cleanly.
+   *
+   * The parser recovers and returns a partial tree, which is right for a
+   * scanner — half a file still yields real findings. But a caller comparing
+   * two states has to know, because a route missing from a broken file looks
+   * exactly like a route that was deleted.
+   */
+  hasSyntaxErrors: boolean;
 }
 
 function lineOf(source: ts.SourceFile, node: ts.Node): number {
@@ -254,6 +263,11 @@ export function extractModule(fileName: string, text: string): ExtractedModule {
   ts.forEachChild(source, visitEnv);
 
   return {
+    // `parseDiagnostics` is not on the public SourceFile type but is what the
+    // parser records; there is no public way to ask "did this parse cleanly"
+    // without building a Program, which would need module resolution.
+    hasSyntaxErrors:
+      ((source as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics ?? []).length > 0,
     moduleDirectives: directivesOf(source.statements),
     functions,
     envReads,

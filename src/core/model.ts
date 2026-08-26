@@ -109,6 +109,13 @@ export interface ApplicationSecurityModel {
     confidence: number;
   };
   entryPoints: EntryPoint[];
+  /**
+   * Files that did not parse cleanly, sorted.
+   *
+   * The scan still reports what it could read. A comparison between two states
+   * needs this to tell an incomplete analysis from a real change.
+   */
+  unparsedFiles?: string[];
   clientBoundaries: ClientBoundary[];
   environment: EnvironmentUsage[];
   findings: Finding[];

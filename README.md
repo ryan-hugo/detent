@@ -37,6 +37,7 @@ detent diff     [project] [--base REF | --baseline PATH] [--json] [--html PATH] 
 detent contract [project] [--contract PATH] [--json] [--html PATH] [--markdown]
 detent explain  [project] --route ROUTE [--json]
 detent impact   [project] --symbol NAME|FILE#NAME [--json]
+detent review   [project] [--base REF] [--json]
 detent triage   [project] --sarif PATH [--json]
 detent init     [project] [--force]
 detent graph    [project] [--html PATH]
@@ -192,6 +193,52 @@ A date formatter reached by forty routes guards none of them; a guard reached by
 It says what depends on the symbol now. It does not predict what removing it would do — that would be a claim the model cannot support.
 
 Use `file#name` when the same name is called from several places and you want one of them.
+
+## Reviewing the change you are making
+
+Before you commit, `review` compares your working tree against `HEAD` and reports what your edit did to the security model:
+
+```bash
+detent review
+```
+
+```
+Security review
+
+  Compared against HEAD
+
+  Posture changes: 2  (2 weakening)
+  Evidence changes without posture change: 1
+
+  /api/a
+    regression: admin -> public
+    removed: requireAdmin, sharedGuard
+
+  /api/b
+    regression: admin -> public
+    removed: requireAdmin, sharedGuard
+
+  /api/c
+    evidence changed, posture unchanged (admin)
+    removed: sharedGuard
+
+  Depends on the symbols that changed:
+    sharedGuard: reached by 3, security evidence for 0
+
+  Dependency is not consequence: 2 postures actually changed.
+```
+
+Three different claims, kept apart:
+
+- **three routes depend** on the helper that changed;
+- **two postures actually moved** — proven by scanning both states;
+- **one route kept its posture** through a guard of its own, so its evidence changed while its answer did not.
+
+Only the middle one is a security regression, and only that exits 1.
+
+A route that did not exist before is `absent`, never `public`. Adding a route is new surface, not a regression. Removing one is not exposure. And when a file in your working tree does not parse — normal mid-edit — the output says the analysis is incomplete rather than reporting a clean result.
+
+`--base main` compares against a branch instead. Reading history never touches your working tree.
 
 ## Seeing what reaches what
 

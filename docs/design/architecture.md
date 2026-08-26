@@ -38,6 +38,7 @@ findings            security changes
 - `src/core/explain.ts`: reports why an entry point was classified as it was, from evidence already in the model. Reports reasoning, never performs any.
 - `src/core/blame.ts`: finds when a route's posture last changed, by scanning historical trees. Compares postures produced by the scanner; never recomputes one.
 - `src/core/impact.ts`: inverts the reachability the scanner recorded, answering which entry points reach a symbol and which of them depend on it for their access level. A derived view, not a second source of truth.
+- `src/core/review.ts`: compares two real states of a project and reports what the change did to its posture. Composes scan, explain and impact; classifies nothing itself.
 - `src/core/enrich.ts`: adds reachability context to another scanner's SARIF output. Matches by path only — no file named in a SARIF is ever opened.
 - `src/core/diff.ts`: semantic comparison between models.
 - `src/reporters/`: presentation only; no security logic. `text.ts` for terminals/CI logs, `markdown.ts` for pull-request surfaces, `html.ts` for a self-contained offline report. Reporters must escape all model-derived strings, since identifiers originate in untrusted target code.

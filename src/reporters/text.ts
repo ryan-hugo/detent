@@ -5,6 +5,7 @@ import type { EnrichedFinding } from "../core/enrich.js";
 import type { EvidenceStep, Explanation } from "../core/explain.js";
 import type { BlameResult } from "../core/blame.js";
 import type { ImpactResult } from "../core/impact.js";
+import type { ReviewResult } from "../core/review.js";
 
 export function renderModel(model: ApplicationSecurityModel): string {
   const lines: string[] = [];
@@ -216,5 +217,79 @@ export function renderImpact(result: ImpactResult): string {
       lines.push(`    via ${[...item.via, result.symbol.name].join(" -> ")}`);
     }
   }
+  return lines.join("\n");
+}
+
+const CHANGE_LABEL: Record<string, string> = {
+  regression: "regression",
+  improvement: "improvement",
+  "added-surface": "new public surface",
+  "added-protected-surface": "new protected surface",
+  "removed-surface": "surface removed",
+  "evidence-only": "evidence changed",
+};
+
+export function renderReview(result: ReviewResult, base: string): string {
+  const lines = ["Security review", "", `  Compared against ${base}`, ""];
+
+  if (result.unparsedFiles.length > 0) {
+    // Said first, because it changes how everything below should be read: a
+    // route missing from a file that did not parse looks exactly like one that
+    // was deleted.
+    lines.push(`  ${result.unparsedFiles.length} file(s) did not parse, so this analysis is incomplete:`);
+    for (const file of result.unparsedFiles.slice(0, 5)) lines.push(`    ${file}`);
+    lines.push("");
+  }
+
+  if (result.postureChanges.length === 0 && result.evidenceChanges.length === 0) {
+    lines.push(
+      result.unparsedFiles.length > 0
+        ? "  No security posture changes found in what could be parsed."
+        : "  No security posture changes detected.",
+    );
+    return lines.join("\n");
+  }
+
+  lines.push(
+    `  Posture changes: ${result.postureChanges.length}` +
+      (result.regressionCount > 0 ? `  (${result.regressionCount} weakening)` : ""),
+  );
+  lines.push(`  Evidence changes without posture change: ${result.evidenceChanges.length}`);
+
+  for (const change of result.postureChanges) {
+    lines.push("");
+    lines.push(`  ${change.subject}`);
+    lines.push(`    ${CHANGE_LABEL[change.kind] ?? change.kind}: ${change.before} -> ${change.after}`);
+    if (change.evidenceRemoved.length > 0) lines.push(`    removed: ${change.evidenceRemoved.join(", ")}`);
+    if (change.evidenceAdded.length > 0) lines.push(`    added: ${change.evidenceAdded.join(", ")}`);
+  }
+
+  for (const change of result.evidenceChanges) {
+    lines.push("");
+    lines.push(`  ${change.subject}`);
+    // Said plainly: the guard changed, the answer did not.
+    lines.push(`    evidence changed, posture unchanged (${change.after})`);
+    if (change.evidenceRemoved.length > 0) lines.push(`    removed: ${change.evidenceRemoved.join(", ")}`);
+    if (change.evidenceAdded.length > 0) lines.push(`    added: ${change.evidenceAdded.join(", ")}`);
+  }
+
+  if (result.dependencies.length > 0) {
+    lines.push("");
+    lines.push("  Depends on the symbols that changed:");
+    for (const dependency of result.dependencies) {
+      lines.push(
+        `    ${dependency.symbol}: reached by ${dependency.reachableCount}, ` +
+          `security evidence for ${dependency.securityEvidenceCount}`,
+      );
+    }
+    // The counts above are dependency, not consequence. Only the posture
+    // changes listed earlier are proven to have moved.
+    lines.push("");
+    lines.push(
+      `  Dependency is not consequence: ${result.postureChanges.length} ` +
+        `${result.postureChanges.length === 1 ? "posture" : "postures"} actually changed.`,
+    );
+  }
+
   return lines.join("\n");
 }

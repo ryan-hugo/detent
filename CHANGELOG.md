@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`review`.** Compares the working tree against HEAD and reports what the
+  change did to the security model: regressions, improvements, new surface,
+  removed surface, and evidence that changed without moving a posture. Composes
+  the existing scanner, explain and impact rather than adding analysis.
+  Dependency and consequence are reported separately — a helper three routes
+  rely on may have moved only two of them. Exits 1 only on a regression.
+  A file that does not parse is reported as incomplete analysis rather than as
+  a clean result.
 - **`impact`.** Answers which entry points reach a symbol, and which of them
   depend on it for their access level. Two counts, because they are two claims:
   a date formatter reached by forty routes guards none of them. Derived by

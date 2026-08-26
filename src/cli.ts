@@ -11,9 +11,10 @@ import { EnrichError, enrichFindings, parseSarif } from "./core/enrich.js";
 import { ExplainError, explain, findEntryPoints, knownSubjects } from "./core/explain.js";
 import { blame } from "./core/blame.js";
 import { findSymbols, impact } from "./core/impact.js";
+import { review } from "./core/review.js";
 import type { SymbolRef } from "./core/impact.js";
 import type { ApplicationSecurityModel } from "./core/model.js";
-import { renderBlame, renderBreaches, renderDiff, renderExplanations, renderImpact, renderModel, renderTriage } from "./reporters/text.js";
+import { renderBlame, renderBreaches, renderDiff, renderExplanations, renderImpact, renderReview, renderModel, renderTriage } from "./reporters/text.js";
 import { renderContractHtml, renderDiffHtml, renderGraphHtml, renderModelHtml } from "./reporters/html.js";
 import { renderContractMarkdown, renderDiffMarkdown } from "./reporters/markdown.js";
 
@@ -31,6 +32,7 @@ function usage(): never {
       "  explain   [project] --route ROUTE [--json]",
       "  blame     [project] --route ROUTE [--max-commits N] [--since WHEN] [--json]",
       "  impact    [project] --symbol NAME|FILE#NAME [--json]",
+      "  review    [project] [--base REF] [--json]",
       "  triage    [project] --sarif PATH [--json]",
       "  graph     [project] [--html PATH]",
       "  version",
@@ -277,6 +279,24 @@ try {
     }
     const result = impact(model, matches[0] as SymbolRef);
     console.log(args.includes("--json") ? JSON.stringify(result, null, 2) : renderImpact(result));
+  } else if (command === "review") {
+    if (!isGitRepository(root)) {
+      console.error(`review needs a git repository, and ${root} is not one.`);
+      process.exit(2);
+    }
+    // Default to HEAD: the question is "what does the change I am making now
+    // do", and the working tree is where that change lives — staged or not.
+    const base = option(args, "--base") ?? "HEAD";
+    const sha = resolveRef(root, base);
+    console.error(`Comparing working tree against ${base} (${sha.slice(0, 8)})`);
+
+    const beforeModel = withTree(root, base, (dir) => ({ ...scan(dir), root }));
+    const afterModel = scan(root);
+    const result = review(beforeModel, afterModel);
+
+    console.log(args.includes("--json") ? JSON.stringify(result, null, 2) : renderReview(result, base));
+    // Matches `diff` and `contract`: weakening fails, everything else reports.
+    if (result.regressionCount > 0) process.exitCode = 1;
   } else if (command === "graph") {
     const model = scan(root);
     const out = option(args, "--html") ?? path.join(root, ".detent", "graph.html");

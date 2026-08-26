@@ -38,11 +38,13 @@ export function scanNextProject(projectRoot: string): ApplicationSecurityModel {
   const entryPoints: EntryPoint[] = [];
   const clientBoundaries: ClientBoundary[] = [];
   const environment: EnvironmentUsage[] = [];
+  const unparsedFiles: string[] = [];
 
   for (const file of files) {
     const text = fs.readFileSync(file, "utf8");
     const relative = rel(root, file);
     const module = extractModule(relative, text);
+    if (module.hasSyntaxErrors) unparsedFiles.push(relative);
 
     const isClient = module.moduleDirectives.includes("use client");
     const isServerModule = module.moduleDirectives.includes("use server");
@@ -128,6 +130,7 @@ export function scanNextProject(projectRoot: string): ApplicationSecurityModel {
     root,
     framework: { name: "nextjs" as const, confidence: files.some((file) => file.includes(`${path.sep}app${path.sep}`)) ? 0.95 : 0.5 },
     entryPoints: entryPoints.sort((a, b) => a.id.localeCompare(b.id)),
+    unparsedFiles: unparsedFiles.sort(),
     clientBoundaries: clientBoundaries.sort((a, b) => a.file.localeCompare(b.file)),
     environment: environment.sort((a, b) => `${a.location.file}:${a.location.line}`.localeCompare(`${b.location.file}:${b.location.line}`)),
   };

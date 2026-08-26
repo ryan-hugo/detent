@@ -75,6 +75,7 @@ export function scanSvelteKitProject(projectRoot: string): ApplicationSecurityMo
   const entryPoints: EntryPoint[] = [];
   const clientBoundaries: ClientBoundary[] = [];
   const environment: EnvironmentUsage[] = [];
+  const unparsedFiles: string[] = [];
 
   for (const file of files) {
     const relative = rel(root, file);
@@ -83,6 +84,7 @@ export function scanSvelteKitProject(projectRoot: string): ApplicationSecurityMo
     if (!inRoutes && !/hooks\.server\.(ts|js)$/.test(relative)) continue;
 
     const module = extractModule(relative, fs.readFileSync(file, "utf8"));
+    if (module.hasSyntaxErrors) unparsedFiles.push(relative);
 
     for (const read of module.envReads) {
       environment.push({
@@ -169,6 +171,7 @@ export function scanSvelteKitProject(projectRoot: string): ApplicationSecurityMo
     root,
     framework: { name: "sveltekit" as const, confidence: entryPoints.length > 0 ? 0.95 : 0.5 },
     entryPoints: entryPoints.sort((a, b) => a.id.localeCompare(b.id)),
+    unparsedFiles: unparsedFiles.sort(),
     clientBoundaries: clientBoundaries.sort((a, b) => a.file.localeCompare(b.file)),
     environment: environment.sort((a, b) =>
       `${a.location.file}:${a.location.line}`.localeCompare(`${b.location.file}:${b.location.line}`),
