@@ -50,10 +50,29 @@ export interface ExtractedRouteConfig {
   line: number;
 }
 
+/**
+ * An `export { local as exported }` binding.
+ *
+ * Recorded so a caller can follow the export back to the body that implements
+ * it. Without this a route file written as `export { handler as GET }` exposes
+ * no function the scanner can see, and the route disappears from the model.
+ */
+export interface ReExport {
+  /** Name the module exports it under, e.g. `GET`. */
+  exported: string;
+  /** Name in the declaring scope, e.g. `handler`. */
+  local: string;
+  /** Module specifier when re-exported from elsewhere; absent when local. */
+  from?: string;
+  line: number;
+}
+
 export interface ExtractedModule {
   /** Directives that apply to the whole module (top of file only). */
   moduleDirectives: string[];
   functions: ExtractedFunction[];
+  /** `export { … }` bindings, local and cross-module. */
+  reExports: ReExport[];
   /** `export const config = {…}`, when the module declares one. */
   routeConfig?: ExtractedRouteConfig;
   /** `process.env.X` reads anywhere in the file. */
@@ -232,6 +251,7 @@ export function extractModule(fileName: string, text: string): ExtractedModule {
   const envReads: { name: string; line: number }[] = [];
   const localFunctions = new Map<string, ExtractedFunction>();
   const imports: ImportBinding[] = [];
+  const reExports: ReExport[] = [];
   let routeConfig: ExtractedRouteConfig | undefined;
 
   // Imports and local declarations first: resolving a guard means knowing both
@@ -268,6 +288,46 @@ export function extractModule(fileName: string, text: string): ExtractedModule {
   }
 
   for (const statement of source.statements) {
+    // `export { handler as GET }` and `export { fn as DELETE } from "./mod"`.
+    //
+    // A route file written this way exported nothing this extractor could see,
+    // so the route vanished entirely — the silent kind of failure, and worse
+    // than a wrong label. One local function may be exported under several
+    // method names, and each is its own entry point.
+    if (ts.isExportDeclaration(statement) && statement.exportClause && ts.isNamedExports(statement.exportClause)) {
+      const from = ts.isStringLiteral(statement.moduleSpecifier ?? ({} as ts.Node))
+        ? (statement.moduleSpecifier as ts.StringLiteral).text
+        : undefined;
+      const line = lineOf(source, statement);
+
+      for (const element of statement.exportClause.elements) {
+        const exported = element.name.text;
+        const local = element.propertyName?.text ?? exported;
+
+        if (from) {
+          // Re-exported from another module. The body is not in this file, so
+          // the call list is empty and the binding is recorded as an import for
+          // the resolver to follow. Claiming a guard we have not seen would be
+          // inventing evidence; an empty body reads as unguarded, which is the
+          // safe direction to be wrong in.
+          // Recorded under the name in the *source* module, which is what the
+          // resolver looks a callee up by. For `export { deleteUser as DELETE }`
+          // the body lives under `deleteUser`, not `DELETE`.
+          imports.push({ local, from, line });
+          reExports.push({ exported, local, from, line });
+          functions.push({ name: exported, line, isInlineServerAction: false, calls: [] });
+          continue;
+        }
+
+        const target = localFunctions.get(local);
+        if (target) {
+          functions.push({ ...target, name: exported, line });
+          reExports.push({ exported, local, line });
+        }
+      }
+      continue;
+    }
+
     // `export default handler` — a binding exported by reference. Resolved
     // against what the module already declared, so a middleware written this
     // way is still found. Named `default`, which is what a caller looks for.
@@ -408,6 +468,7 @@ export function extractModule(fileName: string, text: string): ExtractedModule {
       ((source as unknown as { parseDiagnostics?: unknown[] }).parseDiagnostics ?? []).length > 0,
     moduleDirectives: directivesOf(source.statements),
     functions,
+    reExports,
     ...(routeConfig ? { routeConfig } : {}),
     envReads,
     localFunctions,

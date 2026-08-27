@@ -3,6 +3,7 @@ import path from "node:path";
 import { CONFIG_FILENAME, ConfigError, EMPTY_CONFIG, parseConfig } from "../core/config.js";
 import type { DetentConfig } from "../core/config.js";
 import type { ReachableCall } from "../core/model.js";
+import type { ExtractedCall, ExtractedFunction, ExtractedModule } from "./extract.js";
 import type { ResolvedCall } from "./resolve.js";
 
 /**
@@ -59,6 +60,27 @@ export function qualifyReachable(calls: ResolvedCall[]): ReachableCall[] {
   return [...byIdentity.values()].sort(
     (a, b) => a.callSite.localeCompare(b.callSite) || a.name.localeCompare(b.name),
   );
+}
+
+/**
+ * Calls to follow for one exported handler.
+ *
+ * Normally the handler's own body. But a handler re-exported from another
+ * module — `export { fn as DELETE } from "./mod"` — has no body in this file,
+ * so its call list is empty and it would read as unguarded no matter what the
+ * implementation does. The resolver already knows how to follow an imported
+ * name, so the export is treated as a call to it and the guard inside becomes
+ * evidence one hop deeper, exactly as a delegating handler does.
+ *
+ * Shared by both adapters: the shape is an ES module feature, not a framework
+ * convention, and duplicating it would let the two drift apart.
+ */
+export function seedCalls(module: ExtractedModule, fn: ExtractedFunction): ExtractedCall[] {
+  if (fn.calls.length > 0) return fn.calls;
+  const forwarded = module.reExports.find(
+    (item) => item.exported === fn.name && item.from !== undefined,
+  );
+  return forwarded ? [{ name: forwarded.local, line: forwarded.line }] : fn.calls;
 }
 
 /** Project-relative path with forward slashes, so model output is platform-stable. */

@@ -65,6 +65,15 @@ const cases = [
     expectedEntryPoints: 2,
   },
   {
+    // Re-exported handlers are discovered, and a guard in the module the export
+    // points at still counts. Three entry points: one local function exported
+    // under two method names, plus one imported from another module.
+    name: 'next-reexport',
+    project: path.join(root, 'test/fixtures/next-reexport'),
+    expectedRules: [],
+    expectedEntryPoints: 3,
+  },
+  {
     // Second adapter: the same model, a different framework's conventions.
     name: 'sveltekit-basic',
     project: path.join(root, 'test/fixtures/sveltekit-basic'),

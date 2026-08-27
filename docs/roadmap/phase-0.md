@@ -40,11 +40,19 @@ Done (continued):
 - ~~Model `middleware.ts` and its matcher, so a route guarded by middleware stops
   reading as `public`.~~ Closed 2026-08-26; see "Gap 4 closed" below.
 
-Outstanding:
+- ~~Support re-exported Route Handlers conservatively (`export { handler as GET }`).~~
+  Closed 2026-08-26; see "Re-exported handlers" below.
 
-- Support re-exported Route Handlers conservatively (`export { handler as GET }`).
-  The same gap applies to `export { auth as middleware } from "auth"`, the
-  next-auth v5 shape: it is recorded as no barrier rather than an assumed one.
+**P0.1 is complete.** Every measured gap is closed.
+
+Outstanding (not P0.1, and deliberately not attempted):
+
+- `export * from "./handlers"` names nothing, so which methods it re-exports
+  cannot be known without real module resolution. Inventing them would be
+  fabricating entry points, so a wildcard produces none.
+- `export { auth as middleware } from "auth"` — the next-auth v5 shape — points
+  at a package, not a project file. It is recorded as no barrier rather than an
+  assumed one.
 
 #### Measured gaps (2026-08-25)
 
@@ -119,6 +127,47 @@ next-auth-example — the fix removes false positives without adding any.
 Locked by `test/middleware.test.mjs` (31 tests) and the `next-middleware` eval
 fixture, which asserts both halves: the matched route is protected, and the
 route the matcher does not name is not.
+
+#### Re-exported handlers (2026-08-26)
+
+A route file written as `export { handler as GET }` exported nothing the
+extractor could see, so the route did not appear in the model **at all** — worse
+than a wrong label, because an unguarded route was not there to be reported.
+Measured before the fix: a project with two such routes produced `entryPoints: 0`.
+
+What is handled, and what is deliberately not:
+
+- **`export { handler as GET, handler as DELETE }`** — one local function under
+  several method names is several entry points, each analysed with that
+  function's body.
+- **`export { deleteUser as DELETE } from "@/lib/handlers"`** — no body in the
+  route file. The export is treated as a call to the imported name, so the
+  resolver follows it and a guard in the implementation counts as evidence one
+  hop deeper. Without this the route read as `public` while being genuinely
+  protected — a false positive introduced by the discovery fix itself.
+- **Barrel modules.** `route -> barrel -> implementation` is followed, because a
+  barrel holds no body and stopping there reported a guarded handler as
+  unguarded. Cyclic re-exports terminate on the resolver's existing `seen` set.
+- **`export * from "./handlers"`** produces nothing. It names no exports, so
+  which methods it forwards cannot be known without real module resolution, and
+  guessing would fabricate entry points.
+- **Type-only exports and non-method names** produce nothing.
+
+The seeding logic lives in `src/adapters/shared.ts` and is used by both
+adapters: a re-export is an ES module feature, not a framework convention, and
+duplicating it would let the two drift. Fixing it in one place also revealed
+that SvelteKit's `$lib` alias was never resolved, so guards behind it were
+invisible to the second adapter — now handled alongside `@/`.
+
+Measured on real repositories: nextauthjs/next-auth-example ships
+`export { handler as GET, handler as POST }` in `app/[...proxy]/route.tsx`.
+Entry points went from 1 to 3 — two real routes recovered, both correctly
+`authenticated` from the `auth()` call inside the shared handler. Findings
+stayed at 0 there and on taxonomy: the fix recovers hidden attack surface
+without adding noise.
+
+Locked by `test/reexport.test.mjs` (15 tests) and the `next-reexport` eval
+fixture.
 
 ### P0.2 — configurable auth vocabulary — done
 

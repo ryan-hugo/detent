@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { loadConfig, qualifyReachable, rel, walk } from "../shared.js";
+import { loadConfig, qualifyReachable, rel, seedCalls, walk } from "../shared.js";
 import { classifyAuth, classifySensitive } from "../../core/classify.js";
 import { inferAccess } from "../../core/access.js";
 import { barrierApplies } from "../../core/middleware.js";
@@ -141,8 +141,9 @@ export function scanNextProject(projectRoot: string): ApplicationSecurityModel {
       const sensitiveOperations: SensitiveOperation[] = [];
 
       // Follow the handler into what it calls. A thin delegating handler holds
-      // no evidence itself; the guard is one or two calls deeper.
-      const reachable = resolveCalls(root, file, module, fn.calls, loader);
+      // no evidence itself; the guard is one or two calls deeper. `seedCalls`
+      // covers the case where the handler is re-exported and has no body here.
+      const reachable = resolveCalls(root, file, module, seedCalls(module, fn), loader);
 
       for (const call of reachable) {
         const callLocation = { file: relative, line: call.line };

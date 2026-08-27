@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Re-exported route handlers.** `export { handler as GET }` produced no entry
+  point at all, so the route was absent from the model rather than merely
+  mislabelled — an unguarded route that was not there to be reported. One
+  function exported under several method names is now several entry points, and
+  a handler re-exported from another module (`export { fn as DELETE } from
+  "./mod"`) keeps the guard that lives in its implementation, followed through
+  barrel modules. A wildcard `export *` still produces nothing: it names no
+  exports, and guessing which methods it forwards would fabricate entry points.
+  On nextauthjs/next-auth-example this recovered two real routes (1 → 3 entry
+  points) with no new findings. The logic is shared by both adapters, which also
+  fixed SvelteKit's `$lib` alias never being resolved.
+
 - **Middleware as a security barrier.** A route guarded only by `middleware.ts`
   (or `proxy.ts`, which Next.js 16 renamed it to) no longer reads as `public`.
   `config.matcher` is interpreted with the path-to-regexp semantics Next.js

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { loadConfig, qualifyReachable, rel, walk } from "../shared.js";
+import { loadConfig, qualifyReachable, rel, seedCalls, walk } from "../shared.js";
 import { classifyAuth, classifySensitive } from "../../core/classify.js";
 import { inferAccess } from "../../core/access.js";
 import { deriveFindings } from "../../core/findings.js";
@@ -110,7 +110,9 @@ export function scanSvelteKitProject(projectRoot: string): ApplicationSecurityMo
       const isLoad = fn.name === "load";
       if (!isMethod && !isFormAction && !isLoad) continue;
 
-      const reachable = resolveCalls(root, file, module, fn.calls, loader);
+      // `seedCalls` covers a handler re-exported from another module, whose
+      // body is not in this file.
+      const reachable = resolveCalls(root, file, module, seedCalls(module, fn), loader);
       const authSignals: AuthSignal[] = [];
       const sensitiveOperations: SensitiveOperation[] = [];
 

@@ -77,6 +77,11 @@ function resolveSpecifier(root: string, fromFile: string, specifier: string): st
     base = path.resolve(path.dirname(fromFile), specifier);
   } else if (specifier.startsWith("@/")) {
     base = path.resolve(root, specifier.slice(2));
+  } else if (specifier === "$lib" || specifier.startsWith("$lib/")) {
+    // SvelteKit's built-in alias, always `src/lib`. Without it a guard behind
+    // `$lib/...` is never followed, so the second adapter could not resolve
+    // helper chains the way the Next.js one does.
+    base = path.resolve(root, "src/lib", specifier.slice("$lib".length).replace(/^\//, ""));
   } else if (/^(lib|app|src|components|server|utils)\//.test(specifier)) {
     // Next.js projects commonly resolve these from the root via baseUrl.
     base = path.resolve(root, specifier);
@@ -153,6 +158,20 @@ export function resolveCalls(
 
       seen.add(key);
       const chain = [...via, name];
+
+      // A barrel module re-exports without holding a body:
+      // `export { impl as mid } from "./impl"`. The function found here has no
+      // calls, so stopping would report a guarded handler as unguarded. Follow
+      // the export one more hop, under the name the source module uses.
+      const forwarded =
+        fn.calls.length === 0
+          ? imported.reExports.find((item) => item.exported === name && item.from !== undefined)
+          : undefined;
+      if (forwarded) {
+        walk(target, imported, [{ name: forwarded.local, line: forwarded.line }], depth, chain);
+        continue;
+      }
+
       for (const inner of fn.calls) {
         out.push({ ...inner, depth: depth + 1, via: chain, definedIn: rel(target) });
       }
